@@ -38,6 +38,13 @@ module cva6 import ariane_pkg::*; #(
   // Timer facilities
   input  logic                         time_irq_i,   // timer interrupt in (async)
   input  logic                         debug_req_i,  // debug request (async)
+
+  //EVU Slave AXI port
+  input ariane_axi::req_lite_t axi_evu_conf_req_i,
+  output ariane_axi::resp_lite_t axi_evu_conf_resp, 
+
+  SPU_INTF.Output        evu_output,
+
 `ifdef FIRESIM_TRACE
   // firesim trace port
   output traced_instr_pkg::trace_port_t trace_o,
@@ -214,6 +221,7 @@ module cva6 import ariane_pkg::*; #(
   logic                     dtlb_miss_ex_perf;
   logic                     dcache_miss_cache_perf;
   logic                     icache_miss_cache_perf;
+
   // --------------
   // CTRL <-> *
   // --------------
@@ -604,6 +612,14 @@ module cva6 import ariane_pkg::*; #(
     .resolved_branch_i ( resolved_branch        )
   );
 
+
+  //To read csr0
+  csr_regfile i_csr_regfile0(
+  .csr_op_i(),                   // Operation to perform on the CSR file
+  .csr_addr_i(),                 // Address of the register to read/write
+  .csr_wdata_i(),                // Write data in
+  .csr_rdata_o(csr0),
+  );
   // ------------
   // Controller
   // ------------
@@ -959,5 +975,14 @@ module cva6 import ariane_pkg::*; #(
       rvfi_o[i].pc_rdata = commit_instr_id_commit[i].pc;
     end
 `endif
+
+  // ------------
+  // EVU_top
+  // ------------
+  evu_top evu_top_i #(.ASID_WIDTH ( ASID_WIDTH ))
+  (.clk_i(clk_i), .rst_ni(rst_ni), .commit_instr_i(commit_instr_id_commit), .commit_ack_i(commit_ack), 
+  .l1_icache_miss_i(icache_miss_cache_perf), .l1_dcache_miss_i(dcache_miss_cache_perf), .itlb_miss_i(itlb_miss_ex_perf), 
+  .dtlb_miss_i(dtlb_miss_ex_perf), .sb_full_i(sb_full), .if_empty_i(~fetch_valid_if_id), 
+  .ex_i(ex_commit), .eret_i(eret), .resolved_branch_i(resolved_branch), .evu_ouput(evu_ouput), .priv_lvl_i(priv_lvl), .asid_i(asid_csr_ex))
 
 endmodule // ariane

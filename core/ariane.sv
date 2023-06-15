@@ -28,6 +28,9 @@ module ariane import ariane_pkg::*; #(
   // Timer facilities
   input  logic                         time_irq_i,   // timer interrupt in (async)
   input  logic                         debug_req_i,  // debug request (async)
+  input ariane_axi::req_lite_t axi_evu_conf_req_i, //AXI input to evu_top
+  output ariane_axi::resp_lite_t axi_evu_conf_resp_o, //AXI output to evu_top
+  SPU_INTF.Output        evu_output,
 `ifdef FIRESIM_TRACE
   // firesim trace port
   output traced_instr_pkg::trace_port_t trace_o,
@@ -46,6 +49,7 @@ module ariane import ariane_pkg::*; #(
   output ariane_axi::req_t             axi_req_o,
   input  ariane_axi::resp_t            axi_resp_i
 `endif
+
 );
 
   cvxif_pkg::cvxif_req_t  cvxif_req;
@@ -74,8 +78,11 @@ module ariane import ariane_pkg::*; #(
     .l15_req_o            ( l15_req_o                 ),
     .l15_rtrn_i           ( l15_rtrn_i                ),
 `endif
+    .axi_evu_conf_req_i            ( axi_evu_conf_req_i   ),
+    .axi_evu_conf_resp_o           ( axi_evu_conf_resp_o  ),
     .axi_req_o            ( axi_req_o                 ),
-    .axi_resp_i           ( axi_resp_i                )
+    .axi_resp_i           ( axi_resp_i                ),
+    .evu_output           ( evu_output                )
   );
 
   if (ariane_pkg::CVXIF_PRESENT) begin : gen_example_coprocessor
