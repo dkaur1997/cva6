@@ -3,7 +3,7 @@
 // Description: Performance counters interface
 
 module evu_top import ariane_pkg::*; #(    
-    //parameter int unsigned ASID_WIDTH = 0,
+    parameter int unsigned ASID_WIDTH = 0,
     parameter int unsigned NUM_SEL_LINE_REG = 1,
     parameter int unsigned AxiLiteAddrWidth = 32'd0,
     parameter int unsigned AxiLiteDataWidth = 32'd0,
