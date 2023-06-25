@@ -28,6 +28,9 @@ module wt_dcache import ariane_pkg::*; import wt_cache_pkg::*; #(
   input  logic                           flush_i,     // high until acknowledged
   output logic                           flush_ack_o, // send a single cycle acknowledge signal when the cache is flushed
   output logic                           miss_o,      // we missed on a ld/st
+  output logic                           busy_o,
+  input  logic                           stall_i,      // stall new memory requests
+  input  logic                           init_ni,
   output logic                           wbuffer_empty_o,
   output logic                           wbuffer_not_ni_o,
 
@@ -60,24 +63,21 @@ module wt_dcache import ariane_pkg::*; import wt_cache_pkg::*; #(
   logic [DCACHE_CL_IDX_WIDTH-1:0] wr_cl_idx;
   logic [DCACHE_OFFSET_WIDTH-1:0] wr_cl_off;
   logic [DCACHE_LINE_WIDTH-1:0]   wr_cl_data;
-  logic [DCACHE_USER_LINE_WIDTH-1:0]   wr_cl_user;
   logic [DCACHE_LINE_WIDTH/8-1:0] wr_cl_data_be;
   logic [DCACHE_SET_ASSOC-1:0]    wr_vld_bits;
   logic [DCACHE_SET_ASSOC-1:0]    wr_req;
   logic                           wr_ack;
   logic [DCACHE_CL_IDX_WIDTH-1:0] wr_idx;
   logic [DCACHE_OFFSET_WIDTH-1:0] wr_off;
-  riscv::xlen_t                   wr_data;
-  logic [(riscv::XLEN/8)-1:0]     wr_data_be;
-  logic [DCACHE_USER_WIDTH-1:0]   wr_user;
+  logic [63:0]                    wr_data;
+  logic [7:0]                     wr_data_be;
 
   // miss unit <-> controllers/wbuffer
   logic [NumPorts-1:0]                          miss_req;
   logic [NumPorts-1:0]                          miss_ack;
   logic [NumPorts-1:0]                          miss_nc;
   logic [NumPorts-1:0]                          miss_we;
-  logic [NumPorts-1:0][riscv::XLEN-1:0]         miss_wdata;
-  logic [NumPorts-1:0][DCACHE_USER_WIDTH-1:0]   miss_wuser;
+  logic [NumPorts-1:0][63:0]                    miss_wdata;
   logic [NumPorts-1:0][riscv::PLEN-1:0]         miss_paddr;
   logic [NumPorts-1:0][DCACHE_SET_ASSOC-1:0]    miss_vld_bits;
   logic [NumPorts-1:0][2:0]                     miss_size;
@@ -94,8 +94,7 @@ module wt_dcache import ariane_pkg::*; import wt_cache_pkg::*; #(
   logic [NumPorts-1:0][DCACHE_TAG_WIDTH-1:0]    rd_tag;
   logic [NumPorts-1:0][DCACHE_CL_IDX_WIDTH-1:0] rd_idx;
   logic [NumPorts-1:0][DCACHE_OFFSET_WIDTH-1:0] rd_off;
-  riscv::xlen_t                                 rd_data;
-  logic [DCACHE_USER_WIDTH-1:0]                 rd_user;
+  logic [63:0]                                  rd_data;
   logic [DCACHE_SET_ASSOC-1:0]                  rd_vld_bits;
   logic [DCACHE_SET_ASSOC-1:0]                  rd_hit_oh;
 
@@ -106,6 +105,13 @@ module wt_dcache import ariane_pkg::*; import wt_cache_pkg::*; #(
   // wbuffer <-> memory
   wbuffer_t [DCACHE_WBUF_DEPTH-1:0]             wbuffer_data;
 
+  // controllers -> management
+  logic [NumPorts-2:0]                          ctrl_busy;
+
+  // missunit -> management
+  logic                                         missunit_busy;
+
+  assign busy_o = |ctrl_busy | missunit_busy | ~wbuffer_empty_o;
 
 ///////////////////////////////////////////////////////
 // miss handling unit
@@ -122,8 +128,10 @@ module wt_dcache import ariane_pkg::*; import wt_cache_pkg::*; #(
     .flush_i            ( flush_i            ),
     .flush_ack_o        ( flush_ack_o        ),
     .miss_o             ( miss_o             ),
+    .busy_o             ( missunit_busy      ),
     .wbuffer_empty_i    ( wbuffer_empty_o    ),
     .cache_en_o         ( cache_en           ),
+    .init_ni            ( init_ni            ),
     // amo interface
     .amo_req_i          ( amo_req_i          ),
     .amo_resp_o         ( amo_resp_o         ),
@@ -133,7 +141,6 @@ module wt_dcache import ariane_pkg::*; import wt_cache_pkg::*; #(
     .miss_nc_i          ( miss_nc            ),
     .miss_we_i          ( miss_we            ),
     .miss_wdata_i       ( miss_wdata         ),
-    .miss_wuser_i       ( miss_wuser         ),
     .miss_paddr_i       ( miss_paddr         ),
     .miss_vld_bits_i    ( miss_vld_bits      ),
     .miss_size_i        ( miss_size          ),
@@ -152,7 +159,6 @@ module wt_dcache import ariane_pkg::*; import wt_cache_pkg::*; #(
     .wr_cl_idx_o        ( wr_cl_idx          ),
     .wr_cl_off_o        ( wr_cl_off          ),
     .wr_cl_data_o       ( wr_cl_data         ),
-    .wr_cl_user_o       ( wr_cl_user         ),
     .wr_cl_data_be_o    ( wr_cl_data_be      ),
     .wr_vld_bits_o      ( wr_vld_bits        ),
     // memory interface
@@ -179,6 +185,8 @@ module wt_dcache import ariane_pkg::*; import wt_cache_pkg::*; #(
       .clk_i           ( clk_i             ),
       .rst_ni          ( rst_ni            ),
       .cache_en_i      ( cache_en          ),
+      .busy_o          ( ctrl_busy     [k] ),
+      .stall_i         ( stall_i           ),
       // reqs from core
       .req_port_i      ( req_ports_i   [k] ),
       .req_port_o      ( req_ports_o   [k] ),
@@ -187,7 +195,6 @@ module wt_dcache import ariane_pkg::*; import wt_cache_pkg::*; #(
       .miss_ack_i      ( miss_ack      [k] ),
       .miss_we_o       ( miss_we       [k] ),
       .miss_wdata_o    ( miss_wdata    [k] ),
-      .miss_wuser_o    ( miss_wuser    [k] ),
       .miss_vld_bits_o ( miss_vld_bits [k] ),
       .miss_paddr_o    ( miss_paddr    [k] ),
       .miss_nc_o       ( miss_nc       [k] ),
@@ -205,7 +212,6 @@ module wt_dcache import ariane_pkg::*; import wt_cache_pkg::*; #(
       .rd_tag_only_o   ( rd_tag_only   [k] ),
       .rd_ack_i        ( rd_ack        [k] ),
       .rd_data_i       ( rd_data           ),
-      .rd_user_i       ( rd_user           ),
       .rd_vld_bits_i   ( rd_vld_bits       ),
       .rd_hit_oh_i     ( rd_hit_oh         )
     );
@@ -235,7 +241,6 @@ module wt_dcache import ariane_pkg::*; import wt_cache_pkg::*; #(
     .miss_ack_i      ( miss_ack      [2]   ),
     .miss_we_o       ( miss_we       [2]   ),
     .miss_wdata_o    ( miss_wdata    [2]   ),
-    .miss_wuser_o    ( miss_wuser    [2]   ),
     .miss_vld_bits_o ( miss_vld_bits [2]   ),
     .miss_paddr_o    ( miss_paddr    [2]   ),
     .miss_nc_o       ( miss_nc       [2]   ),
@@ -262,7 +267,6 @@ module wt_dcache import ariane_pkg::*; import wt_cache_pkg::*; #(
     .wr_idx_o        ( wr_idx              ),
     .wr_off_o        ( wr_off              ),
     .wr_data_o       ( wr_data             ),
-    .wr_user_o       ( wr_user             ),
     .wr_data_be_o    ( wr_data_be          ),
     // write buffer forwarding
     .wbuffer_data_o  ( wbuffer_data        ),
@@ -291,7 +295,6 @@ module wt_dcache import ariane_pkg::*; import wt_cache_pkg::*; #(
     .rd_vld_bits_o     ( rd_vld_bits        ),
     .rd_hit_oh_o       ( rd_hit_oh          ),
     .rd_data_o         ( rd_data            ),
-    .rd_user_o         ( rd_user            ),
     // cacheline write port
     .wr_cl_vld_i       ( wr_cl_vld          ),
     .wr_cl_nc_i        ( wr_cl_nc           ),
@@ -300,7 +303,6 @@ module wt_dcache import ariane_pkg::*; import wt_cache_pkg::*; #(
     .wr_cl_idx_i       ( wr_cl_idx          ),
     .wr_cl_off_i       ( wr_cl_off          ),
     .wr_cl_data_i      ( wr_cl_data         ),
-    .wr_cl_user_i      ( wr_cl_user         ),
     .wr_cl_data_be_i   ( wr_cl_data_be      ),
     .wr_vld_bits_i     ( wr_vld_bits        ),
     // single word write port
@@ -309,7 +311,6 @@ module wt_dcache import ariane_pkg::*; import wt_cache_pkg::*; #(
     .wr_idx_i          ( wr_idx             ),
     .wr_off_i          ( wr_off             ),
     .wr_data_i         ( wr_data            ),
-    .wr_user_i         ( wr_user            ),
     .wr_data_be_i      ( wr_data_be         ),
     // write buffer forwarding
     .wbuffer_data_i    ( wbuffer_data       )

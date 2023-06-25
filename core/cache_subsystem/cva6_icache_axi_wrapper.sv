@@ -23,6 +23,9 @@ module cva6_icache_axi_wrapper import ariane_pkg::*; import wt_cache_pkg::*; #(
   input  logic              flush_i,     // flush the icache, flush and kill have to be asserted together
   input  logic              en_i,        // enable icache
   output logic              miss_o,      // to performance counter
+  output logic              busy_o,
+  input  logic              stall_i,
+  input  logic              init_ni,
   // address translation requests
   input  icache_areq_i_t    areq_i,
   output icache_areq_o_t    areq_o,
@@ -103,6 +106,9 @@ module cva6_icache_axi_wrapper import ariane_pkg::*; import wt_cache_pkg::*; #(
     .flush_i            ( flush_i             ),
     .en_i               ( en_i                ),
     .miss_o             ( miss_o              ),
+    .busy_o             ( busy_o              ),
+    .stall_i            ( stall_i             ),
+    .init_ni            ( init_ni             ),
     .areq_i             ( areq_i              ),
     .areq_o             ( areq_o              ),
     .dreq_i             ( dreq_i              ),
@@ -118,7 +124,6 @@ module cva6_icache_axi_wrapper import ariane_pkg::*; import wt_cache_pkg::*; #(
   // AXI shim
   // --------
     axi_shim #(
-    .AxiUserWidth    ( AXI_USER_WIDTH         ),
     .AxiNumWords     ( AxiNumWords            ),
     .AxiIdWidth      ( $size(axi_resp_i.r.id) )
   ) i_axi_shim (
@@ -135,14 +140,12 @@ module cva6_icache_axi_wrapper import ariane_pkg::*; import wt_cache_pkg::*; #(
     .rd_last_o       ( axi_rd_last       ),
     .rd_valid_o      ( axi_rd_valid      ),
     .rd_data_o       ( axi_rd_data       ),
-    .rd_user_o       (                   ),
     .rd_id_o         ( axi_rd_id_out     ),
     .rd_exokay_o     ( axi_rd_exokay     ),
     .wr_req_i        ( '0                ),
     .wr_gnt_o        (                   ),
     .wr_addr_i       ( '0                ),
     .wr_data_i       ( '0                ),
-    .wr_user_i       ( '0                ),
     .wr_be_i         ( '0                ),
     .wr_blen_i       ( '0                ),
     .wr_size_i       ( '0                ),

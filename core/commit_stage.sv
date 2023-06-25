@@ -50,8 +50,11 @@ module commit_stage import ariane_pkg::*; #(
     output logic                                    commit_csr_o,       // commit the pending CSR instruction
     output logic                                    fence_i_o,          // flush I$ and pipeline
     output logic                                    fence_o,            // flush D$ and pipeline
+    output logic [19:0]                             fence_t_o,          // flush microarchitecture
     output logic                                    flush_commit_o,     // request a pipeline flush
-    output logic                                    sfence_vma_o        // flush TLBs and pipeline
+    output logic                                    sfence_vma_o,       // flush TLBs and pipeline
+    output logic                                    hfence_vvma_o,      // flush TLBs and pipeline
+    output logic                                    hfence_gvma_o       // flush TLBs and pipeline
 );
 
 // ila_0 i_ila_commit (
@@ -109,6 +112,9 @@ module commit_stage import ariane_pkg::*; #(
         fence_i_o          = 1'b0;
         fence_o            = 1'b0;
         sfence_vma_o       = 1'b0;
+        hfence_vvma_o      = 1'b0;
+        hfence_gvma_o      = 1'b0;
+        fence_t_o          = 20'b0;
         csr_write_fflags_o = 1'b0;
         flush_commit_o  = 1'b0;
 
@@ -162,6 +168,16 @@ module commit_stage import ariane_pkg::*; #(
                 end
             end
             // ------------------
+            // FENCE.T Logic
+            // ------------------
+            // fence.t is idempotent so we can safely re-execute it after returning
+            // from interrupt service routine
+            if (commit_instr_i[0].op == FENCE_T) begin
+                commit_ack_o[0] = no_st_pending_i;
+                // tell the controller to flush the D$
+                fence_t_o = no_st_pending_i ? commit_instr_i[0].result[31:12] : 20'b0;
+            end
+            // ------------------
             // SFENCE.VMA Logic
             // ------------------
             // sfence.vma is idempotent so we can safely re-execute it after returning
@@ -170,6 +186,30 @@ module commit_stage import ariane_pkg::*; #(
             if (commit_instr_i[0].op == SFENCE_VMA) begin
                 // no store pending so we can flush the TLBs and pipeline
                 sfence_vma_o = no_st_pending_i;
+                // wait for the store buffer to drain until flushing the pipeline
+                commit_ack_o[0] = no_st_pending_i;
+            end
+            // ------------------
+            // HFENCE.VVMA Logic
+            // ------------------
+            // hfence.vvma is idempotent so we can safely re-execute it after returning
+            // from interrupt service routine
+            // check if this instruction was a HFENCE_VVMA
+            if (commit_instr_i[0].op == HFENCE_VVMA) begin
+                // no store pending so we can flush the TLBs and pipeline
+                hfence_vvma_o = no_st_pending_i;
+                // wait for the store buffer to drain until flushing the pipeline
+                commit_ack_o[0] = no_st_pending_i;
+            end
+            // ------------------
+            // HFENCE.GVMA Logic
+            // ------------------
+            // hfence.gvma is idempotent so we can safely re-execute it after returning
+            // from interrupt service routine
+            // check if this instruction was a HFENCE_GVMA
+            if (commit_instr_i[0].op == HFENCE_GVMA) begin
+                // no store pending so we can flush the TLBs and pipeline
+                hfence_gvma_o = no_st_pending_i;
                 // wait for the store buffer to drain until flushing the pipeline
                 commit_ack_o[0] = no_st_pending_i;
             end
@@ -217,6 +257,7 @@ module commit_stage import ariane_pkg::*; #(
             if (commit_ack_o[0] && commit_instr_i[1].valid
                                 && !halt_i
                                 && !(commit_instr_i[0].fu inside {CSR})
+                                && (commit_instr_i[0].op != FENCE_T)
                                 && !flush_dcache_i
                                 && !instr_0_is_amo
                                 && !single_step_i) begin
@@ -252,12 +293,17 @@ module commit_stage import ariane_pkg::*; #(
     // -----------------------------
     // here we know for sure that we are taking the exception
     always_comb begin : exception_handling
+        automatic logic [2:0] funct;
         // Multiple simultaneous interrupts and traps at the same privilege level are handled in the following decreasing
         // priority order: external interrupts, software interrupts, timer interrupts, then finally any synchronous traps. (1.10 p.30)
         // interrupts are correctly prioritized in the CSR reg file, exceptions are prioritized here
         exception_o.valid = 1'b0;
         exception_o.cause = '0;
         exception_o.tval  = '0;
+        exception_o.tval2 = '0;
+        exception_o.tinst = '0;
+        exception_o.gva   = 1'b0;
+
         // we need a valid instruction in the commit stage
         if (commit_instr_i[0].valid) begin
             // ------------------------
@@ -269,6 +315,9 @@ module commit_stage import ariane_pkg::*; #(
                 // the instruction bits from the ID stage. If a earlier exception happened we don't care
                 // as we will overwrite it anyway in the next IF bl
                 exception_o.tval = commit_instr_i[0].ex.tval;
+                exception_o.tinst = commit_instr_i[0].ex.tinst;
+                exception_o.tval2 = commit_instr_i[0].ex.tval2;
+                exception_o.gva   = commit_instr_i[0].ex.gva;
             end
             // ------------------------
             // Earlier Exceptions

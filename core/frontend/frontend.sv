@@ -50,6 +50,9 @@ module frontend import ariane_pkg::*; #(
     logic                   icache_valid_q;
     ariane_pkg::frontend_exception_t icache_ex_valid_q;
     logic [riscv::VLEN-1:0] icache_vaddr_q;
+    logic [riscv::GPLEN-1:0]icache_gpaddr_q;
+    logic [riscv::XLEN-1:0] icache_tinst_q;
+    logic                   icache_gva_q;
     logic                   instr_queue_ready;
     logic [ariane_pkg::INSTR_PER_FETCH-1:0] instr_queue_consumed;
     // upper-most branch-prediction from last cycle
@@ -68,11 +71,7 @@ module frontend import ariane_pkg::*; #(
     // shift amount
     logic [$clog2(ariane_pkg::INSTR_PER_FETCH)-1:0] shamt;
     // address will always be 16 bit aligned, make this explicit here
-    if (ariane_pkg::RVC) begin : gen_shamt
-      assign shamt = icache_dreq_i.vaddr[$clog2(ariane_pkg::INSTR_PER_FETCH):1];
-    end else begin
-      assign shamt = 1'b0;
-    end
+    assign shamt = icache_dreq_i.vaddr[$clog2(ariane_pkg::INSTR_PER_FETCH):1];
 
     // -----------------------
     // Ctrl Flow Speculation
@@ -129,16 +128,12 @@ module frontend import ariane_pkg::*; #(
     // the prediction we saved from the previous fetch
     assign bht_prediction_shifted[0] = (serving_unaligned) ? bht_q : bht_prediction[addr[0][1]];
     assign btb_prediction_shifted[0] = (serving_unaligned) ? btb_q : btb_prediction[addr[0][1]];
-    
-    if (ariane_pkg::RVC) begin : gen_btb_prediction_shifted
-      // for all other predictions we can use the generated address to index
-      // into the branch prediction data structures
-      for (genvar i = 1; i < INSTR_PER_FETCH; i++) begin : gen_prediction_address
-        assign bht_prediction_shifted[i] = bht_prediction[addr[i][$clog2(INSTR_PER_FETCH):1]];
-        assign btb_prediction_shifted[i] = btb_prediction[addr[i][$clog2(INSTR_PER_FETCH):1]];
-      end
-    end;
-    
+    // for all other predictions we can use the generated address to index
+    // into the branch prediction data structures
+    for (genvar i = 1; i < INSTR_PER_FETCH; i++) begin : gen_prediction_address
+      assign bht_prediction_shifted[i] = bht_prediction[addr[i][$clog2(INSTR_PER_FETCH):1]];
+      assign btb_prediction_shifted[i] = btb_prediction[addr[i][$clog2(INSTR_PER_FETCH):1]];
+    end
     // for the return address stack it doens't matter as we have the
     // address of the call/return already
     logic bp_valid;
@@ -345,6 +340,9 @@ module frontend import ariane_pkg::*; #(
         icache_data_q     <= '0;
         icache_valid_q    <= 1'b0;
         icache_vaddr_q    <= 'b0;
+        icache_gpaddr_q   <= 'b0;
+        icache_tinst_q    <= 'b0;
+        icache_gva_q      <= 1'b0;
         icache_ex_valid_q <= ariane_pkg::FE_NONE;
         btb_q             <= '0;
         bht_q             <= '0;
@@ -356,8 +354,14 @@ module frontend import ariane_pkg::*; #(
         if (icache_dreq_i.valid) begin
           icache_data_q        <= icache_data;
           icache_vaddr_q       <= icache_dreq_i.vaddr;
+          icache_gpaddr_q      <= icache_dreq_i.ex.tval2[riscv::GPLEN-1:0];
+          icache_tinst_q       <= icache_dreq_i.ex.tinst;
+          icache_gva_q         <= icache_dreq_i.ex.gva;
+
           // Map the only three exceptions which can occur in the frontend to a two bit enum
-          if (icache_dreq_i.ex.cause == riscv::INSTR_PAGE_FAULT) begin
+          if(icache_dreq_i.ex.cause == riscv::INSTR_GUEST_PAGE_FAULT) begin
+            icache_ex_valid_q <= ariane_pkg::FE_INSTR_GUEST_PAGE_FAULT;
+          end else if (icache_dreq_i.ex.cause == riscv::INSTR_PAGE_FAULT) begin
             icache_ex_valid_q <= ariane_pkg::FE_INSTR_PAGE_FAULT;
           end else if (icache_dreq_i.ex.cause == riscv::INSTR_ACCESS_FAULT) begin
             icache_ex_valid_q <= ariane_pkg::FE_INSTR_ACCESS_FAULT;
@@ -434,6 +438,9 @@ module frontend import ariane_pkg::*; #(
       .addr_i              ( addr                 ), // from re-aligner
       .exception_i         ( icache_ex_valid_q    ), // from I$
       .exception_addr_i    ( icache_vaddr_q       ),
+      .exception_gpaddr_i  ( icache_gpaddr_q      ),
+      .exception_tinst_i   ( icache_tinst_q       ),
+      .exception_gva_i     ( icache_gva_q         ),
       .predict_address_i   ( predict_address      ),
       .cf_type_i           ( cf_type              ),
       .valid_i             ( instruction_valid    ), // from re-aligner

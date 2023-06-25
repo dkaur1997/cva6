@@ -21,6 +21,7 @@ module issue_stage import ariane_pkg::*; #(
 )(
     input  logic                                     clk_i,     // Clock
     input  logic                                     rst_ni,    // Asynchronous reset active low
+    input  logic                                     rst_uarch_ni,
 
     output logic                                     sb_full_o,
     input  logic                                     flush_unissued_instr_i,
@@ -36,6 +37,7 @@ module issue_stage import ariane_pkg::*; #(
     output fu_data_t                                 fu_data_o,
     output logic [riscv::VLEN-1:0]                   pc_o,
     output logic                                     is_compressed_instr_o,
+    output riscv::xlen_t                             tinst_o,
     input  logic                                     flu_ready_i,
     output logic                                     alu_valid_o,
     // ex just resolved our predicted branch, we are ready to accept new requests
@@ -56,19 +58,12 @@ module issue_stage import ariane_pkg::*; #(
 
     output logic                                     csr_valid_o,
 
-    // CVXIF
-    //Issue interface
-    output logic                                     x_issue_valid_o,
-    input  logic                                     x_issue_ready_i,
-    output logic [31:0]                              x_off_instr_o,
-
     // write back port
     input logic [NR_WB_PORTS-1:0][TRANS_ID_BITS-1:0] trans_id_i,
     input bp_resolve_t                               resolved_branch_i,
     input logic [NR_WB_PORTS-1:0][riscv::XLEN-1:0]   wbdata_i,
-    input exception_t [NR_WB_PORTS-1:0]              ex_ex_i, // exception from execute stage or CVXIF offloaded instruction
+    input exception_t [NR_WB_PORTS-1:0]              ex_ex_i, // exception from execute stage
     input logic [NR_WB_PORTS-1:0]                    wt_valid_i,
-    input logic                                      x_we_i,
 
     // commit port
     input  logic [NR_COMMIT_PORTS-1:0][4:0]          waddr_i,
@@ -94,7 +89,7 @@ module issue_stage import ariane_pkg::*; #(
     logic                      rs2_valid_iro_sb;
 
     logic [REG_ADDR_SIZE-1:0]  rs3_iro_sb;
-    rs3_len_t                  rs3_sb_iro;
+    logic [FLEN-1:0]           rs3_sb_iro;
     logic                      rs3_valid_iro_sb;
 
     scoreboard_entry_t         issue_instr_rename_sb;
@@ -110,7 +105,7 @@ module issue_stage import ariane_pkg::*; #(
     // ---------------------------------------------------------
     re_name i_re_name (
         .clk_i                  ( clk_i                        ),
-        .rst_ni                 ( rst_ni                       ),
+        .rst_ni                 ( rst_uarch_ni                 ),
         .flush_i                ( flush_i                      ),
         .flush_unissied_instr_i ( flush_unissued_instr_i       ),
         .issue_instr_i          ( decoded_instr_i              ),
@@ -129,6 +124,8 @@ module issue_stage import ariane_pkg::*; #(
         .NR_WB_PORTS(NR_WB_PORTS),
         .NR_COMMIT_PORTS(NR_COMMIT_PORTS)
     ) i_scoreboard (
+        .rst_ni                ( rst_uarch_ni                              ),
+
         .sb_full_o             ( sb_full_o                                 ),
         .unresolved_branch_i   ( 1'b0                                      ),
         .rd_clobber_gpr_o      ( rd_clobber_gpr_sb_iro                     ),
@@ -183,10 +180,8 @@ module issue_stage import ariane_pkg::*; #(
         .alu_valid_o         ( alu_valid_o                     ),
         .branch_valid_o      ( branch_valid_o                  ),
         .csr_valid_o         ( csr_valid_o                     ),
-        .cvxif_valid_o       ( x_issue_valid_o                 ),
-        .cvxif_ready_i       ( x_issue_ready_i                 ),
-        .cvxif_off_instr_o   ( x_off_instr_o                   ),
         .mult_valid_o        ( mult_valid_o                    ),
+        .tinst_o             ( tinst_o                         ),
         .*
     );
 

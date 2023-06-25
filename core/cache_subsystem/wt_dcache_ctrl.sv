@@ -20,6 +20,8 @@ module wt_dcache_ctrl import ariane_pkg::*; import wt_cache_pkg::*; #(
   input  logic                            clk_i,          // Clock
   input  logic                            rst_ni,         // Asynchronous reset active low
   input  logic                            cache_en_i,
+  output logic                            busy_o,
+  input  logic                            stall_i,        // stall new memory requests
   // core request ports
   input  dcache_req_i_t                   req_port_i,
   output dcache_req_o_t                   req_port_o,
@@ -27,8 +29,7 @@ module wt_dcache_ctrl import ariane_pkg::*; import wt_cache_pkg::*; #(
   output logic                            miss_req_o,
   input  logic                            miss_ack_i,
   output logic                            miss_we_o,       // unused (set to 0)
-  output riscv::xlen_t                    miss_wdata_o,    // unused (set to 0)
-  output logic [DCACHE_USER_WIDTH-1:0]    miss_wuser_o,    // unused (set to 0)
+  output logic [63:0]                     miss_wdata_o,    // unused (set to 0)
   output logic [DCACHE_SET_ASSOC-1:0]     miss_vld_bits_o, // valid bits at the missed index
   output logic [riscv::PLEN-1:0]          miss_paddr_o,
   output logic                            miss_nc_o,       // request to I/O space
@@ -45,8 +46,7 @@ module wt_dcache_ctrl import ariane_pkg::*; import wt_cache_pkg::*; #(
   output logic                            rd_req_o,        // read the word at offset off_i[:3] in all ways
   output logic                            rd_tag_only_o,   // set to zero here
   input  logic                            rd_ack_i,
-  input  riscv::xlen_t                    rd_data_i,
-  input  logic [DCACHE_USER_WIDTH-1:0]    rd_user_i,
+  input  logic [63:0]                     rd_data_i,
   input  logic [DCACHE_SET_ASSOC-1:0]     rd_vld_bits_i,
   input  logic [DCACHE_SET_ASSOC-1:0]     rd_hit_oh_i
 );
@@ -77,7 +77,6 @@ module wt_dcache_ctrl import ariane_pkg::*; import wt_cache_pkg::*; #(
   assign rd_off_o      = address_off_d;
 
   assign req_port_o.data_rdata = rd_data_i;
-  assign req_port_o.data_ruser = rd_user_i;
 
   // to miss unit
   assign miss_vld_bits_o       = vld_data_q;
@@ -90,11 +89,12 @@ module wt_dcache_ctrl import ariane_pkg::*; import wt_cache_pkg::*; #(
 
   assign miss_we_o    = '0;
   assign miss_wdata_o = '0;
-  assign miss_wuser_o = '0;
   assign miss_id_o    = RdTxId;
   assign rd_req_d     = rd_req_o;
   assign rd_ack_d     = rd_ack_i;
   assign rd_tag_only_o = '0;
+
+  assign busy_o = (state_q != IDLE);
 
 ///////////////////////////////////////////////////////
 // main control logic
@@ -114,7 +114,7 @@ module wt_dcache_ctrl import ariane_pkg::*; import wt_cache_pkg::*; #(
         //////////////////////////////////
         // wait for an incoming request
         IDLE: begin
-          if (req_port_i.data_req) begin
+          if (req_port_i.data_req && !stall_i) begin
             rd_req_o = 1'b1;
             // if read ack then ack the `req_port_o`, and goto `READ` state
             if (rd_ack_i) begin

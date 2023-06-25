@@ -35,6 +35,9 @@ module cva6_icache import ariane_pkg::*; import wt_cache_pkg::*; #(
   input  logic                      flush_i,              // flush the icache, flush and kill have to be asserted together
   input  logic                      en_i,                 // enable icache
   output logic                      miss_o,               // to performance counter
+  output logic                      busy_o,
+  input  logic                      stall_i,
+  input  logic                      init_ni,              // do not init after enabling
   // address translation requests
   input  icache_areq_i_t            areq_i,
   output icache_areq_o_t            areq_o,
@@ -81,9 +84,7 @@ module cva6_icache import ariane_pkg::*; import wt_cache_pkg::*; #(
   logic [ICACHE_TAG_WIDTH-1:0]          cl_tag_d, cl_tag_q;           // this is the cache tag
   logic [ICACHE_TAG_WIDTH-1:0]          cl_tag_rdata [ICACHE_SET_ASSOC-1:0]; // these are the tags coming from the tagmem
   logic [ICACHE_LINE_WIDTH-1:0]         cl_rdata     [ICACHE_SET_ASSOC-1:0]; // these are the cachelines coming from the cache
-  logic [ICACHE_USER_LINE_WIDTH-1:0]    cl_ruser[ICACHE_SET_ASSOC-1:0]; // these are the cachelines coming from the user cache
   logic [ICACHE_SET_ASSOC-1:0][FETCH_WIDTH-1:0]cl_sel;                // selected word from each cacheline
-  logic [ICACHE_SET_ASSOC-1:0][FETCH_USER_WIDTH-1:0] cl_user;         // selected word from each cacheline
   logic [ICACHE_SET_ASSOC-1:0]          vld_req;                      // bit enable for valid regs
   logic                                 vld_we;                       // valid bits write enable
   logic [ICACHE_SET_ASSOC-1:0]          vld_wdata;                    // valid bits to write
@@ -93,6 +94,8 @@ module cva6_icache import ariane_pkg::*; import wt_cache_pkg::*; #(
   // cpmtroller FSM
   typedef enum logic[2:0] {FLUSH, IDLE, READ, MISS, KILL_ATRANS, KILL_MISS} state_e;
   state_e state_d, state_q;
+
+  assign busy_o = (state_q != IDLE);
 
 ///////////////////////////////////////////////////////
 // address -> cl_index mapping, interface plumbing
@@ -154,7 +157,7 @@ end else begin : gen_piton_offset
   always_comb begin : p_fsm
     // default assignment
     state_d      = state_q;
-    cache_en_d   = cache_en_q & en_i;// disabling the cache is always possible, enable needs to go via flush
+    cache_en_d   = (cache_en_q | init_ni) & en_i;// disabling the cache is always possible, enable needs to go via flush if we init
     flush_en     = 1'b0;
     cmp_en_d     = 1'b0;
     cache_rden   = 1'b0;
@@ -198,10 +201,11 @@ end else begin : gen_piton_offset
           cmp_en_d = cache_en_q;
 
           // handle pending flushes, or perform cache clear upon enable
-          if (flush_d || (en_i && !cache_en_q)) begin
+          if (flush_d || (en_i && !cache_en_q && !init_ni)) begin
             state_d    = FLUSH;
           // wait for incoming requests
-          end else begin
+          end
+          else if (!stall_i) begin
             // mem requests are for sure invals here
             if (!mem_rtrn_vld_i) begin
               dreq_o.ready = 1'b1;
@@ -391,7 +395,6 @@ end else begin : gen_piton_offset
   for (genvar i=0;i<ICACHE_SET_ASSOC;i++) begin : gen_tag_cmpsel
     assign cl_hit[i] = (cl_tag_rdata[i] == cl_tag_d) & vld_rdata[i];
     assign cl_sel[i] = cl_rdata[i][{cl_offset_q,3'b0} +: FETCH_WIDTH];
-    assign cl_user[i] = cl_ruser[i][{cl_offset_q,3'b0} +: FETCH_USER_WIDTH];
   end
 
 
@@ -403,15 +406,8 @@ end else begin : gen_piton_offset
     .empty_o (         )
   );
 
-  always_comb begin
-    if (cmp_en_q) begin
-      dreq_o.data = cl_sel[hit_idx];
-      dreq_o.user = cl_user[hit_idx];
-    end else begin
-      dreq_o.data = mem_rtrn_i.data[{cl_offset_q,3'b0} +: FETCH_WIDTH];
-      dreq_o.user = mem_rtrn_i.user[{cl_offset_q,3'b0} +: FETCH_USER_WIDTH];
-    end
-  end
+  assign dreq_o.data = (cmp_en_q) ? cl_sel[hit_idx] :
+                                    mem_rtrn_i.data[{cl_offset_q,3'b0} +: FETCH_WIDTH];
 
 ///////////////////////////////////////////////////////
 // memory arrays and regs
@@ -422,10 +418,16 @@ end else begin : gen_piton_offset
 
   for (genvar i = 0; i < ICACHE_SET_ASSOC; i++) begin : gen_sram
     // Tag RAM
-    sram #(
+    `ifdef TARGET_ASIC
+    tc_sram_gf22 #(
+      .MemType   ( "CACHE_TAG"                      ),
+    `else
+    tc_sram #(
+    `endif
       // tag + valid bit
-      .DATA_WIDTH ( ICACHE_TAG_WIDTH+1 ),
-      .NUM_WORDS  ( ICACHE_NUM_WORDS   )
+      .DataWidth ( ICACHE_TAG_WIDTH+1 ),
+      .NumWords  ( ICACHE_NUM_WORDS   ),
+      .NumPorts  ( 1                  )
     ) tag_sram (
       .clk_i     ( clk_i                    ),
       .rst_ni    ( rst_ni                   ),
@@ -434,10 +436,8 @@ end else begin : gen_piton_offset
       .addr_i    ( vld_addr                 ),
       // we can always use the saved tag here since it takes a
       // couple of cycle until we write to the cache upon a miss
-      .wuser_i   ( '0                       ),
       .wdata_i   ( {vld_wdata[i], cl_tag_q} ),
       .be_i      ( '1                       ),
-      .ruser_o   (                          ),
       .rdata_o   ( cl_tag_valid_rdata[i]    )
     );
 
@@ -445,21 +445,23 @@ end else begin : gen_piton_offset
     assign vld_rdata[i]    = cl_tag_valid_rdata[i][ICACHE_TAG_WIDTH];
 
     // Data RAM
-    sram #(
-      .USER_WIDTH ( ICACHE_USER_LINE_WIDTH ),
-      .DATA_WIDTH ( ICACHE_LINE_WIDTH ),
-      .USER_EN    ( ariane_pkg::FETCH_USER_EN ),
-      .NUM_WORDS  ( ICACHE_NUM_WORDS  )
+    `ifdef TARGET_ASIC
+    tc_sram_gf22 #(
+      .MemType   ( "CACHE_DATA"                      ),
+    `else
+    tc_sram #(
+    `endif
+      .DataWidth ( ICACHE_LINE_WIDTH ),
+      .NumWords  ( ICACHE_NUM_WORDS  ),
+      .NumPorts  ( 1                 )
     ) data_sram (
       .clk_i     ( clk_i               ),
       .rst_ni    ( rst_ni              ),
       .req_i     ( cl_req[i]           ),
       .we_i      ( cl_we               ),
       .addr_i    ( cl_index            ),
-      .wuser_i   ( mem_rtrn_i.user     ),
       .wdata_i   ( mem_rtrn_i.data     ),
       .be_i      ( '1                  ),
-      .ruser_o   ( cl_ruser[i]         ),
       .rdata_o   ( cl_rdata[i]         )
     );
   end

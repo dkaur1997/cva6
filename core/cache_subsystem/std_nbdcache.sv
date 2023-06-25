@@ -14,7 +14,7 @@
 
 
 module std_nbdcache import std_cache_pkg::*; import ariane_pkg::*; #(
-    parameter ariane_cfg_t ArianeCfg        = ArianeDefaultConfig // contains cacheable regions
+    parameter logic [63:0] CACHE_START_ADDR = 64'h8000_0000
 )(
     input  logic                           clk_i,       // Clock
     input  logic                           rst_ni,      // Asynchronous reset active low
@@ -23,6 +23,9 @@ module std_nbdcache import std_cache_pkg::*; import ariane_pkg::*; #(
     input  logic                           flush_i,     // high until acknowledged
     output logic                           flush_ack_o, // send a single cycle acknowledge signal when the cache is flushed
     output logic                           miss_o,      // we missed on a LD/ST
+    output logic                           busy_o,
+    input  logic                           stall_i,   // stall new memory requests
+    input  logic                           init_ni,
     // AMOs
     input  amo_req_t                       amo_req_i,
     output amo_resp_t                      amo_resp_o,
@@ -82,16 +85,21 @@ import std_cache_pkg::*;
     cache_line_t [DCACHE_SET_ASSOC-1:0]  rdata_ram;
     cl_be_t                              be_ram;
 
+    // Busy signals
+    logic miss_handler_busy;
+    assign busy_o = |busy | miss_handler_busy;
+
     // ------------------
     // Cache Controller
     // ------------------
     generate
         for (genvar i = 0; i < 3; i++) begin : master_ports
             cache_ctrl  #(
-                .ArianeCfg             ( ArianeCfg            )
+                .CACHE_START_ADDR      ( CACHE_START_ADDR     )
             ) i_cache_ctrl (
                 .bypass_i              ( ~enable_i            ),
                 .busy_o                ( busy            [i]  ),
+                .stall_i               ( stall_i | flush_i    ),
                 // from core
                 .req_port_i            ( req_ports_i     [i]  ),
                 .req_port_o            ( req_ports_o     [i]  ),
@@ -129,6 +137,7 @@ import std_cache_pkg::*;
     miss_handler #(
         .NR_PORTS               ( 3                    )
     ) i_miss_handler (
+        .busy_o                 ( miss_handler_busy    ),
         .flush_i                ( flush_i              ),
         .busy_i                 ( |busy                ),
         // AMOs
@@ -172,10 +181,8 @@ import std_cache_pkg::*;
             .rst_ni  ( rst_ni                               ),
             .we_i    ( we_ram                               ),
             .addr_i  ( addr_ram[DCACHE_INDEX_WIDTH-1:DCACHE_BYTE_OFFSET]  ),
-            .wuser_i ( '0                                   ),
             .wdata_i ( wdata_ram.data                       ),
             .be_i    ( be_ram.data                          ),
-            .ruser_o (                                      ),
             .rdata_o ( rdata_ram[i].data                    ),
             .*
         );
@@ -188,10 +195,8 @@ import std_cache_pkg::*;
             .rst_ni  ( rst_ni                               ),
             .we_i    ( we_ram                               ),
             .addr_i  ( addr_ram[DCACHE_INDEX_WIDTH-1:DCACHE_BYTE_OFFSET]  ),
-            .wuser_i ( '0                                   ),
             .wdata_i ( wdata_ram.tag                        ),
             .be_i    ( be_ram.tag                           ),
-            .ruser_o (                                      ),
             .rdata_o ( rdata_ram[i].tag                     ),
             .*
         );
@@ -215,7 +220,6 @@ import std_cache_pkg::*;
     end
 
     sram #(
-        .USER_WIDTH ( 1                                ),
         .DATA_WIDTH ( 4*DCACHE_DIRTY_WIDTH             ),
         .NUM_WORDS  ( DCACHE_NUM_WORDS                 )
     ) valid_dirty_sram (
@@ -224,10 +228,8 @@ import std_cache_pkg::*;
         .req_i   ( |req_ram                            ),
         .we_i    ( we_ram                              ),
         .addr_i  ( addr_ram[DCACHE_INDEX_WIDTH-1:DCACHE_BYTE_OFFSET] ),
-        .wuser_i ( '0                                  ),
         .wdata_i ( dirty_wdata                         ),
         .be_i    ( be_ram.vldrty                       ),
-        .ruser_o (                                     ),
         .rdata_o ( dirty_rdata                         )
     );
 

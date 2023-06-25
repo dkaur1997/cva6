@@ -34,6 +34,9 @@ module store_unit import ariane_pkg::*; (
     // MMU -> Address Translation
     output logic                     translation_req_o, // request address translation
     output logic [riscv::VLEN-1:0]   vaddr_o,           // virtual address out
+    output logic [riscv::VLEN-1:0]   tinst_o,           // transformed instruction out
+    output logic                     hs_ld_st_inst_o,
+    output logic                     hlvx_inst_o,
     input  logic [riscv::PLEN-1:0]   paddr_i,           // physical address in
     input  exception_t               ex_i,
     input  logic                     dtlb_hit_i,       // will be one in the same cycle translation_req was asserted if it hits
@@ -64,7 +67,7 @@ module store_unit import ariane_pkg::*; (
     assign instr_is_amo = is_amo(lsu_ctrl_i.operator);
     // keep the data and the byte enable for the second cycle (after address translation)
     riscv::xlen_t st_data_n, st_data_q;
-    logic [(riscv::XLEN/8)-1:0]   st_be_n,        st_be_q;
+    logic [7:0]   st_be_n,        st_be_q;
     logic [1:0]   st_data_size_n, st_data_size_q;
     amo_t         amo_op_d,       amo_op_q;
 
@@ -72,6 +75,9 @@ module store_unit import ariane_pkg::*; (
 
     // output assignments
     assign vaddr_o    = lsu_ctrl_i.vaddr; // virtual address
+    assign hs_ld_st_inst_o  = lsu_ctrl_i.hs_ld_st_inst;
+    assign hlvx_inst_o      = lsu_ctrl_i.hlvx_inst;
+    assign tinst_o    = lsu_ctrl_i.tinst; // transformed instruction
     assign trans_id_o = trans_id_q; // transaction id from previous cycle
 
     always_comb begin : store_control
@@ -181,7 +187,7 @@ module store_unit import ariane_pkg::*; (
         st_be_n   = lsu_ctrl_i.be;
         // don't shift the data if we are going to perform an AMO as we still need to operate on this data
         st_data_n = instr_is_amo ? lsu_ctrl_i.data[riscv::XLEN-1:0]
-                                 : data_align(lsu_ctrl_i.vaddr[2:0], lsu_ctrl_i.data);
+                                 : data_align(lsu_ctrl_i.vaddr[2:0], {{64-riscv::XLEN{1'b0}}, lsu_ctrl_i.data[riscv::XLEN-1:0]});
         st_data_size_n = extract_transfer_size(lsu_ctrl_i.operator);
         // save AMO op for next cycle
         case (lsu_ctrl_i.operator)

@@ -26,9 +26,11 @@ module wt_dcache_missunit import ariane_pkg::*; import wt_cache_pkg::*; #(
   input  logic                                       flush_i,     // flush request, this waits for pending tx (write, read) to finish and will clear the cache
   output logic                                       flush_ack_o, // send a single cycle acknowledge signal when the cache is flushed
   output logic                                       miss_o,      // we missed on a ld/st
+  output logic                                       busy_o,      // missunit is busy
   // local cache management signals
   input  logic                                       wbuffer_empty_i,
   output logic                                       cache_en_o,  // local cache enable signal
+  input  logic                                       init_ni,     // no init after reset
   // AMO interface
   input  amo_req_t                                   amo_req_i,
   output amo_resp_t                                  amo_resp_o,
@@ -37,8 +39,7 @@ module wt_dcache_missunit import ariane_pkg::*; import wt_cache_pkg::*; #(
   output logic [NumPorts-1:0]                        miss_ack_o,
   input  logic [NumPorts-1:0]                        miss_nc_i,
   input  logic [NumPorts-1:0]                        miss_we_i,
-  input  logic [NumPorts-1:0][riscv::XLEN-1:0]       miss_wdata_i,
-  input  logic [NumPorts-1:0][DCACHE_USER_WIDTH-1:0] miss_wuser_i,
+  input  logic [NumPorts-1:0][63:0]                  miss_wdata_i,
   input  logic [NumPorts-1:0][riscv::PLEN-1:0]       miss_paddr_i,
   input  logic [NumPorts-1:0][DCACHE_SET_ASSOC-1:0]  miss_vld_bits_i,
   input  logic [NumPorts-1:0][2:0]                   miss_size_i,
@@ -59,7 +60,6 @@ module wt_dcache_missunit import ariane_pkg::*; import wt_cache_pkg::*; #(
   output logic [DCACHE_CL_IDX_WIDTH-1:0]             wr_cl_idx_o,
   output logic [DCACHE_OFFSET_WIDTH-1:0]             wr_cl_off_o,
   output logic [DCACHE_LINE_WIDTH-1:0]               wr_cl_data_o,
-  output logic [DCACHE_USER_LINE_WIDTH-1:0]          wr_cl_user_o,
   output logic [DCACHE_LINE_WIDTH/8-1:0]             wr_cl_data_be_o,
   output logic [DCACHE_SET_ASSOC-1:0]                wr_vld_bits_o,
   // memory interface
@@ -71,7 +71,7 @@ module wt_dcache_missunit import ariane_pkg::*; import wt_cache_pkg::*; #(
 );
 
   // controller FSM
-  typedef enum logic[2:0] {IDLE, DRAIN, AMO,  FLUSH, STORE_WAIT, LOAD_WAIT, AMO_WAIT} state_e;
+  typedef enum logic[2:0] {IDLE, DRAIN, AMO, FLUSH, INIT, STORE_WAIT, LOAD_WAIT, AMO_WAIT} state_e;
   state_e state_d, state_q;
 
   // MSHR for reads
@@ -97,9 +97,7 @@ module wt_dcache_missunit import ariane_pkg::*; import wt_cache_pkg::*; #(
   logic mask_reads, lock_reqs;
   logic amo_sel, miss_is_write;
   logic amo_req_d, amo_req_q;
-  logic [63:0] amo_rtrn_mux;
-  riscv::xlen_t amo_data;
-  logic [63:0] amo_user; //DCACHE USER ? DATA_USER_WIDTH
+  logic [63:0] amo_data, amo_rtrn_mux;
   logic [riscv::PLEN-1:0] tmp_paddr;
   logic [$clog2(NumPorts)-1:0] miss_port_idx;
   logic [DCACHE_CL_IDX_WIDTH-1:0] cnt_d, cnt_q;
@@ -123,6 +121,8 @@ module wt_dcache_missunit import ariane_pkg::*; import wt_cache_pkg::*; #(
   assign miss_req_masked_d = (lock_reqs)  ? miss_req_masked_q      :
                              (mask_reads) ? miss_we_i & miss_req_i : miss_req_i;
   assign miss_is_write     = miss_we_i[miss_port_idx];
+
+  assign busy_o = state_q != IDLE;
 
   // read port arbiter
   lzc #(
@@ -155,7 +155,7 @@ module wt_dcache_missunit import ariane_pkg::*; import wt_cache_pkg::*; #(
 
   // generate random cacheline index
   lfsr #(
-    .LfsrWidth  ( 8        ),
+    .LfsrWidth  ( ariane_pkg::DCACHE_SET_ASSOC        ),
     .OutWidth   ( $clog2(ariane_pkg::DCACHE_SET_ASSOC))
   ) i_lfsr_inv (
     .clk_i          ( clk_i       ),
@@ -204,20 +204,9 @@ module wt_dcache_missunit import ariane_pkg::*; import wt_cache_pkg::*; #(
 ///////////////////////////////////////////////////////
 
   // if size = 32bit word, select appropriate offset, replicate for openpiton...
-  always_comb begin
-    if (riscv::IS_XLEN64) begin
-      if (amo_req_i.size==2'b10) begin
-        amo_data = {amo_req_i.operand_b[0 +: 32], amo_req_i.operand_b[0 +: 32]};
-        amo_user = {amo_req_i.operand_b[0 +: 32], amo_req_i.operand_b[0 +: 32]};
-      end else begin
-        amo_data = amo_req_i.operand_b;
-        amo_user = amo_req_i.operand_b;
-      end
-    end else begin
-      amo_data = amo_req_i.operand_b[0 +: 32];
-      amo_user = amo_req_i.operand_b[0 +: 32];
-    end
-  end
+  assign amo_data = (amo_req_i.size==2'b10) ? {amo_req_i.operand_b[0 +: 32],
+                                               amo_req_i.operand_b[0 +: 32]} :
+                                               amo_req_i.operand_b;
 
   // note: openpiton returns a full cacheline!
   if (Axi64BitCompliant) begin : gen_axi_rtrn_mux
@@ -227,10 +216,9 @@ module wt_dcache_missunit import ariane_pkg::*; import wt_cache_pkg::*; #(
   end
 
   // always sign extend 32bit values
-  assign amo_resp_o.result = (amo_req_i.size==2'b10) ? {{32{amo_rtrn_mux[amo_req_i.operand_a[2]*32 + 31]}},amo_rtrn_mux[amo_req_i.operand_a[2]*32 +: 32]} :
-                                                       amo_rtrn_mux ;
-
-
+  assign amo_resp_o.result = (amo_req_i.size==2'b10) ? {{32{amo_rtrn_mux[amo_req_i.operand_a[2]*32 + 31]}},
+                                                            amo_rtrn_mux[amo_req_i.operand_a[2]*32 +: 32]} :
+                                                       amo_rtrn_mux;
 
   assign amo_req_d = amo_req_i.req;
 
@@ -239,7 +227,6 @@ module wt_dcache_missunit import ariane_pkg::*; import wt_cache_pkg::*; #(
   assign mem_data_o.nc     = (amo_sel) ? 1'b1                : miss_nc_i[miss_port_idx];
   assign mem_data_o.way    = (amo_sel) ? '0                  : repl_way;
   assign mem_data_o.data   = (amo_sel) ? amo_data            : miss_wdata_i[miss_port_idx];
-  assign mem_data_o.user   = (amo_sel) ? amo_user            : miss_wuser_i[miss_port_idx];
   assign mem_data_o.size   = (amo_sel) ? amo_req_i.size      : miss_size_i [miss_port_idx];
   assign mem_data_o.amo_op = (amo_sel) ? amo_req_i.amo_op    : AMO_NONE;
 
@@ -356,7 +343,6 @@ module wt_dcache_missunit import ariane_pkg::*; import wt_cache_pkg::*; #(
   assign wr_cl_tag_o     = mshr_q.paddr[DCACHE_TAG_WIDTH+DCACHE_INDEX_WIDTH-1:DCACHE_INDEX_WIDTH];
   assign wr_cl_off_o     = mshr_q.paddr[DCACHE_OFFSET_WIDTH-1:0];
   assign wr_cl_data_o    = mem_rtrn_i.data;
-  assign wr_cl_user_o    = mem_rtrn_i.user;
   assign wr_cl_data_be_o = (cl_write_en) ? '1 : '0;// we only write complete cachelines into the memory
 
   // only non-NC responses write to the cache
@@ -376,8 +362,8 @@ module wt_dcache_missunit import ariane_pkg::*; import wt_cache_pkg::*; #(
     amo_resp_o.ack   = 1'b0;
     miss_replay_o    = '0;
 
-    // disabling cache is possible anytime, enabling goes via flush
-    enable_d         = enable_q & enable_i;
+    // disabling cache is possible anytime, enabling goes via flush if we init
+    enable_d         = (enable_q | init_ni) & enable_i;
     flush_ack_d      = flush_ack_q;
     flush_en         = 1'b0;
     amo_sel          = 1'b0;
@@ -486,6 +472,12 @@ module wt_dcache_missunit import ariane_pkg::*; import wt_cache_pkg::*; #(
         end
       end
       //////////////////////////////////
+      // initialize the cache
+      INIT: begin
+        // flush, unless we want to skip init
+        state_d = (init_ni) ? IDLE : FLUSH;
+      end
+      //////////////////////////////////
       // send out amo op request
       AMO: begin
         mem_data_o.rtype = DCACHE_ATOMIC_REQ;
@@ -521,7 +513,7 @@ module wt_dcache_missunit import ariane_pkg::*; import wt_cache_pkg::*; #(
 
 always_ff @(posedge clk_i or negedge rst_ni) begin : p_regs
   if (!rst_ni) begin
-    state_q               <= FLUSH;
+    state_q               <= INIT;
     cnt_q                 <= '0;
     enable_q              <= '0;
     flush_ack_q           <= '0;

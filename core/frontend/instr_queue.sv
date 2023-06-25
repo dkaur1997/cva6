@@ -43,7 +43,7 @@
 // the replay mechanism gets more complicated as it can be that a 32 bit instruction
 // can not be pushed at once.
 
-module instr_queue import ariane_pkg::*; (
+module instr_queue (
   input  logic                                               clk_i,
   input  logic                                               rst_ni,
   input  logic                                               flush_i,
@@ -55,6 +55,9 @@ module instr_queue import ariane_pkg::*; (
   // we've encountered an exception, at this point the only possible exceptions are page-table faults
   input  ariane_pkg::frontend_exception_t                    exception_i,
   input  logic [riscv::VLEN-1:0]                             exception_addr_i,
+  input  logic [riscv::GPLEN-1:0]                            exception_gpaddr_i,
+  input  logic [riscv::XLEN-1:0]                             exception_tinst_i,
+  input  logic                                               exception_gva_i,
   // branch predict
   input  logic [riscv::VLEN-1:0]                             predict_address_i,
   input  ariane_pkg::cf_t  [ariane_pkg::INSTR_PER_FETCH-1:0] cf_type_i,
@@ -72,9 +75,12 @@ module instr_queue import ariane_pkg::*; (
     ariane_pkg::cf_t cf;    // branch was taken
     ariane_pkg::frontend_exception_t ex;    // exception happened
     logic [riscv::VLEN-1:0] ex_vaddr;       // lower VLEN bits of tval for exception
+    logic [riscv::GPLEN-1:0] ex_gpaddr;     // lower GPLEN bits of tval2 for exception
+    logic [riscv::XLEN-1:0]  ex_tinst;      // tinst of exception
+    logic                   ex_gva;
   } instr_data_t;
 
-  logic [ariane_pkg::LOG2_INSTR_PER_FETCH-1:0] branch_index;
+  logic [$clog2(ariane_pkg::INSTR_PER_FETCH)-1:0] branch_index;
   // instruction queues
   logic [ariane_pkg::INSTR_PER_FETCH-1:0]
         [$clog2(ariane_pkg::FETCH_FIFO_DEPTH)-1:0] instr_queue_usage;
@@ -93,7 +99,7 @@ module instr_queue import ariane_pkg::*; (
   logic empty_address;
   logic address_overflow;
   // input stream counter
-  logic [ariane_pkg::LOG2_INSTR_PER_FETCH-1:0] idx_is_d, idx_is_q;
+  logic [$clog2(ariane_pkg::INSTR_PER_FETCH)-1:0] idx_is_d, idx_is_q;
   // Registers
   // output FIFO select, one-hot
   logic [ariane_pkg::INSTR_PER_FETCH-1:0] idx_ds_d, idx_ds_q;
@@ -105,8 +111,8 @@ module instr_queue import ariane_pkg::*; (
   logic branch_empty;
   logic [ariane_pkg::INSTR_PER_FETCH-1:0] taken;
   // shift amount, e.g.: instructions we want to retire
-  logic [ariane_pkg::LOG2_INSTR_PER_FETCH:0] popcount;
-  logic [ariane_pkg::LOG2_INSTR_PER_FETCH-1:0] shamt;
+  logic [$clog2(ariane_pkg::INSTR_PER_FETCH):0] popcount;
+  logic [$clog2(ariane_pkg::INSTR_PER_FETCH)-1:0] shamt;
   logic [ariane_pkg::INSTR_PER_FETCH-1:0] valid;
   logic [ariane_pkg::INSTR_PER_FETCH*2-1:0] consumed_extended;
   // FIFO mask
@@ -118,105 +124,74 @@ module instr_queue import ariane_pkg::*; (
   logic [ariane_pkg::INSTR_PER_FETCH-1:0] instr_overflow_fifo;
 
   assign ready_o = ~(|instr_queue_full) & ~full_address;
-  
-  if (ariane_pkg::RVC) begin : gen_multiple_instr_per_fetch_with_C
-  
-    for (genvar i = 0; i < ariane_pkg::INSTR_PER_FETCH; i++) begin : gen_unpack_taken
-      assign taken[i] = cf_type_i[i] != ariane_pkg::NoCF;
-    end
-   
-    // calculate a branch mask, e.g.: get the first taken branch
-    lzc #(
-      .WIDTH   ( ariane_pkg::INSTR_PER_FETCH ),
-      .MODE    ( 0                           ) // count trailing zeros
-    ) i_lzc_branch_index (
-      .in_i    ( taken          ), // we want to count trailing zeros
-      .cnt_o   ( branch_index   ), // first branch on branch_index
-      .empty_o ( branch_empty   )
-    );
-  
- 
-    // the first index is for sure valid
-    // for example (64 bit fetch):
-    // taken mask: 0 1 1 0
-    // leading zero count = 1
-    // 0 0 0 1, 1 1 1 << 1 = 0 0 1 1, 1 1 0
-    // take the upper 4 bits: 0 0 1 1
-    assign branch_mask_extended = {{{ariane_pkg::INSTR_PER_FETCH-1}{1'b0}}, {{ariane_pkg::INSTR_PER_FETCH}{1'b1}}} << branch_index;
-    assign branch_mask = branch_mask_extended[ariane_pkg::INSTR_PER_FETCH * 2 - 2:ariane_pkg::INSTR_PER_FETCH - 1];
 
-    // mask with taken branches to get the actual amount of instructions we want to push
-    assign valid = valid_i & branch_mask;
-    // rotate right again
-    assign consumed_extended = {push_instr_fifo, push_instr_fifo} >> idx_is_q;
-    assign consumed_o = consumed_extended[ariane_pkg::INSTR_PER_FETCH-1:0];
-    // count the numbers of valid instructions we've pushed from this package
-    popcount #(
-      .INPUT_WIDTH   ( ariane_pkg::INSTR_PER_FETCH )
-    ) i_popcount (
-      .data_i     ( push_instr_fifo ),
-      .popcount_o ( popcount        )
-    );
-    assign shamt = popcount[$bits(shamt)-1:0];
+  for (genvar i = 0; i < ariane_pkg::INSTR_PER_FETCH; i++) begin : gen_unpack_taken
+    assign taken[i] = cf_type_i[i] != ariane_pkg::NoCF;
+  end
+  // calculate a branch mask, e.g.: get the first taken branch
+  lzc #(
+    .WIDTH   ( ariane_pkg::INSTR_PER_FETCH ),
+    .MODE    ( 0                           ) // count trailing zeros
+  ) i_lzc_branch_index (
+    .in_i    ( taken          ), // we want to count trailing zeros
+    .cnt_o   ( branch_index   ), // first branch on branch_index
+    .empty_o ( branch_empty   )
+  );
+  // the first index is for sure valid
+  // for example (64 bit fetch):
+  // taken mask: 0 1 1 0
+  // leading zero count = 1
+  // 0 0 0 1, 1 1 1 << 1 = 0 0 1 1, 1 1 0
+  // take the upper 4 bits: 0 0 1 1
+  assign branch_mask_extended = {{{ariane_pkg::INSTR_PER_FETCH-1}{1'b0}}, {{ariane_pkg::INSTR_PER_FETCH}{1'b1}}} << branch_index;
+  assign branch_mask = branch_mask_extended[ariane_pkg::INSTR_PER_FETCH * 2 - 2:ariane_pkg::INSTR_PER_FETCH - 1];
 
-    // save the shift amount for next cycle
-    assign idx_is_d = idx_is_q + shamt;
+  // mask with taken branches to get the actual amount of instructions we want to push
+  assign valid = valid_i & branch_mask;
+  // rotate right again
+  assign consumed_extended = {push_instr_fifo, push_instr_fifo} >> idx_is_q;
+  assign consumed_o = consumed_extended[ariane_pkg::INSTR_PER_FETCH-1:0];
+  // count the numbers of valid instructions we've pushed from this package
+  popcount #(
+    .INPUT_WIDTH   ( ariane_pkg::INSTR_PER_FETCH )
+  ) i_popcount (
+    .data_i     ( push_instr_fifo ),
+    .popcount_o ( popcount        )
+  );
+  assign shamt = popcount[$bits(shamt)-1:0];
 
-    // ----------------------
-    // Input interface
-    // ----------------------
-    // rotate left by the current position
-    assign fifo_pos_extended = { valid, valid } << idx_is_q;
-    // we just care about the upper bits
-    assign fifo_pos = fifo_pos_extended[ariane_pkg::INSTR_PER_FETCH*2-1:ariane_pkg::INSTR_PER_FETCH];
-    // the fifo_position signal can directly be used to guide the push signal of each FIFO
-    // make sure it is not full
-    assign push_instr = fifo_pos & ~instr_queue_full;
-  
-    // duplicate the entries for easier selection e.g.: 3 2 1 0 3 2 1 0
-    for (genvar i = 0; i < ariane_pkg::INSTR_PER_FETCH; i++) begin : gen_duplicate_instr_input
-      assign instr[i] = instr_i[i];
-      assign instr[i + ariane_pkg::INSTR_PER_FETCH] = instr_i[i];
-      assign cf[i] = cf_type_i[i];
-      assign cf[i + ariane_pkg::INSTR_PER_FETCH] = cf_type_i[i];
-    end
+  // save the shift amount for next cycle
+  assign idx_is_d = idx_is_q + shamt;
 
-    // shift the inputs
-    for (genvar i = 0; i < ariane_pkg::INSTR_PER_FETCH; i++) begin : gen_fifo_input_select
-      /* verilator lint_off WIDTH */
-      assign instr_data_in[i].instr = instr[i + idx_is_q];
-      assign instr_data_in[i].cf = cf[i + idx_is_q];
-      assign instr_data_in[i].ex = exception_i; // exceptions hold for the whole fetch packet
-      assign instr_data_in[i].ex_vaddr = exception_addr_i;
-      /* verilator lint_on WIDTH */
-    end
-  end else begin : gen_multiple_instr_per_fetch_without_C
-    
-    assign taken = '0;
-    assign branch_empty = '0;
-    assign branch_index = '0;
-    assign branch_mask_extended = '0;
-    assign branch_mask = '0;
-    assign consumed_extended = '0;
-    assign fifo_pos_extended = '0;
-    assign fifo_pos = '0;
-    assign instr = '0;
-    assign popcount = '0;
-    assign shamt = '0;
-    assign valid = '0;
-    
-    
-    assign consumed_o = push_instr_fifo[0];
-    // ----------------------
-    // Input interface
-    // ----------------------
-    assign push_instr = valid_i & ~instr_queue_full;    
-    
+  // ----------------------
+  // Input interface
+  // ----------------------
+  // rotate left by the current position
+  assign fifo_pos_extended = { valid, valid } << idx_is_q;
+  // we just care about the upper bits
+  assign fifo_pos = fifo_pos_extended[ariane_pkg::INSTR_PER_FETCH*2-1:ariane_pkg::INSTR_PER_FETCH];
+  // the fifo_position signal can directly be used to guide the push signal of each FIFO
+  // make sure it is not full
+  assign push_instr = fifo_pos & ~instr_queue_full;
+
+  // duplicate the entries for easier selection e.g.: 3 2 1 0 3 2 1 0
+  for (genvar i = 0; i < ariane_pkg::INSTR_PER_FETCH; i++) begin : gen_duplicate_instr_input
+    assign instr[i] = instr_i[i];
+    assign instr[i + ariane_pkg::INSTR_PER_FETCH] = instr_i[i];
+    assign cf[i] = cf_type_i[i];
+    assign cf[i + ariane_pkg::INSTR_PER_FETCH] = cf_type_i[i];
+  end
+
+  // shift the inputs
+  for (genvar i = 0; i < ariane_pkg::INSTR_PER_FETCH; i++) begin : gen_fifo_input_select
     /* verilator lint_off WIDTH */
-    assign instr_data_in[0].instr = instr_i[0];
-    assign instr_data_in[0].cf = cf_type_i[0];
-    assign instr_data_in[0].ex = exception_i; // exceptions hold for the whole fetch packet
-    assign instr_data_in[0].ex_vaddr = exception_addr_i;
+    assign instr_data_in[i].instr = instr[i + idx_is_q];
+    assign instr_data_in[i].cf = cf[i + idx_is_q];
+    assign instr_data_in[i].ex = exception_i; // exceptions hold for the whole fetch packet
+    assign instr_data_in[i].ex_vaddr = exception_addr_i;
+    assign instr_data_in[i].ex_gpaddr= exception_gpaddr_i;
+    assign instr_data_in[i].ex_tinst = exception_tinst_i;
+    assign instr_data_in[i].ex_gva   = exception_gva_i;
     /* verilator lint_on WIDTH */
   end
 
@@ -228,84 +203,63 @@ module instr_queue import ariane_pkg::*; (
   // (e.g.: we pushed and it was full)
   // 2. The address/branch predict FIFO was full
   // if one of the FIFOs was full we need to replay the faulting instruction
-  if (ariane_pkg::RVC == 1'b1) begin : gen_instr_overflow_fifo_with_C
-    assign instr_overflow_fifo = instr_queue_full & fifo_pos;
-  end else begin : gen_instr_overflow_fifo_without_C
-    assign instr_overflow_fifo = instr_queue_full & valid_i;
-  end
+  assign instr_overflow_fifo = instr_queue_full & fifo_pos;
   assign instr_overflow = |instr_overflow_fifo; // at least one instruction overflowed
   assign address_overflow = full_address & push_address;
   assign replay_o = instr_overflow | address_overflow;
 
-  if (ariane_pkg::RVC) begin : gen_replay_addr_o_with_c
-    // select the address, in the case of an address fifo overflow just
-    // use the base of this package
-    // if we successfully pushed some instructions we can output the next instruction
-    // which we didn't manage to push
-    assign replay_addr_o = (address_overflow) ? addr_i[0] : addr_i[shamt];
-  end else begin : gen_replay_addr_o_without_C
-    assign replay_addr_o = addr_i[0];
-  end
-  
+  // select the address, in the case of an address fifo overflow just
+  // use the base of this package
+  // if we successfully pushed some instructions we can output the next instruction
+  // which we didn't manage to push
+  assign replay_addr_o = (address_overflow) ? addr_i[0] : addr_i[shamt];
+
   // ----------------------
   // Downstream interface
   // ----------------------
   // as long as there is at least one queue which can take the value we have a valid instruction
   assign fetch_entry_valid_o = ~(&instr_queue_empty);
-  
-  if (ariane_pkg::RVC) begin : gen_downstream_itf_with_c
-    always_comb begin
-      idx_ds_d = idx_ds_q;
 
-      pop_instr = '0;
-      // assemble fetch entry
-      fetch_entry_o.instruction = '0;
-      fetch_entry_o.address = pc_q;
-      fetch_entry_o.ex.valid = 1'b0;
-      fetch_entry_o.ex.cause = '0;
+  always_comb begin
+    idx_ds_d = idx_ds_q;
 
-      fetch_entry_o.ex.tval = '0;
-      fetch_entry_o.branch_predict.predict_address = address_out;
-      fetch_entry_o.branch_predict.cf = ariane_pkg::NoCF;
-      // output mux select
-      for (int unsigned i = 0; i < ariane_pkg::INSTR_PER_FETCH; i++) begin
-        if (idx_ds_q[i]) begin
-          if (instr_data_out[i].ex == ariane_pkg::FE_INSTR_ACCESS_FAULT) begin
+    pop_instr = '0;
+    // assemble fetch entry
+    fetch_entry_o.instruction = '0;
+    fetch_entry_o.address = pc_q;
+    fetch_entry_o.ex.valid = 1'b0;
+    fetch_entry_o.ex.cause = '0;
+
+    fetch_entry_o.ex.tval = '0;
+    fetch_entry_o.ex.tval2= '0;
+    fetch_entry_o.ex.gva  = 1'b0;
+    // tinst hardwire to 0 for Instruction page fault and access fault exceptions
+    fetch_entry_o.ex.tinst = '0;
+    fetch_entry_o.branch_predict.predict_address = address_out;
+    fetch_entry_o.branch_predict.cf = ariane_pkg::NoCF;
+    // output mux select
+    for (int unsigned i = 0; i < ariane_pkg::INSTR_PER_FETCH; i++) begin
+      if (idx_ds_q[i]) begin
+        if (instr_data_out[i].ex == ariane_pkg::FE_INSTR_ACCESS_FAULT) begin
             fetch_entry_o.ex.cause = riscv::INSTR_ACCESS_FAULT;
-          end else begin
+        end else if (instr_data_out[i].ex == ariane_pkg::FE_INSTR_GUEST_PAGE_FAULT) begin
+            fetch_entry_o.ex.cause = riscv::INSTR_GUEST_PAGE_FAULT;
+        end else begin
             fetch_entry_o.ex.cause = riscv::INSTR_PAGE_FAULT;
-          end
-          fetch_entry_o.instruction = instr_data_out[i].instr;
-          fetch_entry_o.ex.valid = instr_data_out[i].ex != ariane_pkg::FE_NONE;
-          fetch_entry_o.ex.tval  = {{64-riscv::VLEN{1'b0}}, instr_data_out[i].ex_vaddr};
-          fetch_entry_o.branch_predict.cf = instr_data_out[i].cf;
-          pop_instr[i] = fetch_entry_valid_o & fetch_entry_ready_i;
         end
-      end
-      // rotate the pointer left
-      if (fetch_entry_ready_i) begin
-        idx_ds_d = {idx_ds_q[ariane_pkg::INSTR_PER_FETCH-2:0], idx_ds_q[ariane_pkg::INSTR_PER_FETCH-1]};
+        fetch_entry_o.instruction = instr_data_out[i].instr;
+        fetch_entry_o.ex.valid = instr_data_out[i].ex != ariane_pkg::FE_NONE;
+        fetch_entry_o.ex.tval  = {{64-riscv::VLEN{1'b0}}, instr_data_out[i].ex_vaddr};
+        fetch_entry_o.ex.tval2 = {{64-riscv::GPLEN{1'b0}}, instr_data_out[i].ex_gpaddr};
+        fetch_entry_o.ex.tinst = {{64-riscv::XLEN{1'b0}}, instr_data_out[i].ex_tinst};
+        fetch_entry_o.ex.gva   = instr_data_out[i].ex_gva;
+        fetch_entry_o.branch_predict.cf = instr_data_out[i].cf;
+        pop_instr[i] = fetch_entry_valid_o & fetch_entry_ready_i;
       end
     end
-  end else begin : gen_downstream_itf_without_c
-    always_comb begin
-      idx_ds_d = '0;
-      idx_is_d = '0;
-      fetch_entry_o.instruction = instr_data_out[0].instr;
-      fetch_entry_o.address = pc_q;
-    
-      fetch_entry_o.ex.valid = instr_data_out[0].ex != ariane_pkg::FE_NONE;
-      if (instr_data_out[0].ex == ariane_pkg::FE_INSTR_ACCESS_FAULT) begin
-        fetch_entry_o.ex.cause = riscv::INSTR_ACCESS_FAULT;
-      end else begin
-        fetch_entry_o.ex.cause = riscv::INSTR_PAGE_FAULT;
-      end
-      fetch_entry_o.ex.tval = {{64-riscv::VLEN{1'b0}}, instr_data_out[0].ex_vaddr};
-    
-      fetch_entry_o.branch_predict.predict_address = address_out;
-      fetch_entry_o.branch_predict.cf = instr_data_out[0].cf;
-    
-      pop_instr[0] = fetch_entry_valid_o & fetch_entry_ready_i;
+    // rotate the pointer left
+    if (fetch_entry_ready_i) begin
+      idx_ds_d = {idx_ds_q[ariane_pkg::INSTR_PER_FETCH-2:0], idx_ds_q[ariane_pkg::INSTR_PER_FETCH-1]};
     end
   end
 
@@ -323,11 +277,7 @@ module instr_queue import ariane_pkg::*; (
     if (fetch_entry_ready_i) begin
       // TODO(zarubaf): This needs to change for a dual issue implementation
       // advance the PC
-      if (ariane_pkg::RVC == 1'b1) begin : gen_pc_with_c_extension
-        pc_d =  pc_q + ((fetch_entry_o.instruction[1:0] != 2'b11) ? 'd2 : 'd4);
-      end else begin : gen_pc_without_c_extension
-        pc_d =  pc_q + 'd4;
-      end
+      pc_d =  pc_q + ((fetch_entry_o.instruction[1:0] != 2'b11) ? 'd2 : 'd4);
     end
 
     if (pop_address) pc_d = address_out;
@@ -394,41 +344,24 @@ module instr_queue import ariane_pkg::*; (
   unread i_unread_fifo_pos (.d_i(|fifo_pos_extended)); // we don't care about the lower signals
   unread i_unread_instr_fifo (.d_i(|instr_queue_usage));
 
-  if (ariane_pkg::RVC) begin : gen_pc_q_with_c
-    always_ff @(posedge clk_i or negedge rst_ni) begin
-      if (!rst_ni) begin
-        idx_ds_q        <= 'b1;
-        idx_is_q        <= '0;
-        pc_q            <= '0;
-        reset_address_q <= 1'b1;
-      end else begin
-        pc_q            <= pc_d;
-        reset_address_q <= reset_address_d;
-        if (flush_i) begin
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) begin
+      idx_ds_q        <= 'b1;
+      idx_is_q        <= '0;
+      pc_q            <= '0;
+      reset_address_q <= 1'b1;
+    end else begin
+      pc_q            <= pc_d;
+      reset_address_q <= reset_address_d;
+      if (flush_i) begin
           // one-hot encoded
           idx_ds_q        <= 'b1;
           // binary encoded
           idx_is_q        <= '0;
           reset_address_q <= 1'b1;
-        end else begin
+      end else begin
           idx_ds_q        <= idx_ds_d;
           idx_is_q        <= idx_is_d;
-        end
-      end
-    end
-  end else begin : gen_pc_q_without_C
-    assign idx_ds_q = '0;
-    assign idx_is_q = '0;
-    always_ff @(posedge clk_i or negedge rst_ni) begin
-      if (!rst_ni) begin
-        pc_q            <= '0;
-        reset_address_q <= 1'b1;
-      end else begin
-        pc_q            <= pc_d;
-        reset_address_q <= reset_address_d;
-        if (flush_i) begin
-          reset_address_q <= 1'b1;
-        end
       end
     end
   end

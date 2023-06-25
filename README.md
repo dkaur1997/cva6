@@ -8,35 +8,32 @@ It has configurable size, separate TLBs, a hardware PTW and branch-prediction (b
 
 ![](docs/_static/ariane_overview.png)
 
-## Directory Structure:
-The directory structure separates the [CVA6 RISC-V CPU](#cva6-risc-v-cpu) core from the [CORE-V-APU FPGA Emulation Platform](#corev-apu-fpga-emulation).
+## New Directory Structure:
+The directory structure has been changed to cleanly separate the [CVA6 RISC-V CPU](#cva6-risc-v-cpu) core from the COREV-APU [FPGA Emulation](#corev-apu-fpga-emulation).
 Files, directories and submodules under `cva6` are for the core _only_ and should not have any dependencies on the APU.
 Files, directories and submodules under `corev_apu` are for the FPGA Emulation platform.
 The CVA6 core can be compiled stand-alone, and obviously the APU is dependent on the core.
 
-The top-level directories of this repo:
-* **ci**: Scriptware for CI.
-* **common**: Source code used by both the CVA6 Core and the COREV APU. Subdirectories from here are `local` for common files that are hosted in this repo and `submodules` that are hosted in other repos.
-* **core**: Source code for the CVA6 Core only. There should be no sources in this directory used to build anything other than the CVA6 core.
-* **corev_apu**: Source code for the CVA6 APU, exclusive of the CVA6 core. There should be no sources in this directory used to build the CVA6 core.
-* **docs**: Documentation.
-* **scripts**: General scriptware.
+#### ci
+Scriptware for CI (unchanged).
 
-## Verification
-The verification environment for the CVA6 is _not_ in this Repository.
+#### common
+Source code used by both the CVA6 Core and the COREV APU.
+Subdirectories from here are `local` for common files that are hosted in this repo and `submodules` that are hosted in other repos.
 
-The verification environment for this core as well as other cores in the OpenHW Group CORE-V family is at the
-[core-v-verif](https://github.com/openhwgroup/core-v-verif) repository on GitHub.
+#### core
+Source code for the CVA6 Core only.
+There should be no sources in this directory used to build anything other than the CVA6 core.
 
-The Makefiles supported in the **core-v-verif** project automatically clone the appropriate version of the **CVA6**  RTL sources.
+#### corev_apu
+Source code for the CVA6 APU, exclusive of the CVA6 core.
+There should be no sources in this directory used to build the CVA6 core.
 
-## Contributing
-We highly appreciate community contributions.
-<br><br>To ease the work of reviewing contributions, please review [CONTRIBUTING](https://github.com/openhwgroup/cva6/blob/master/CONTRIBUTING.md).
+#### docs
+Documentation (unchanged).
 
-## Issues and Troubleshooting
-If you find any problems or issues with CVA6 or the documentation, please check out the [issue tracker](https://github.com/openhwgroup/cva6/issues)
-and create a new issue if your problem is not yet tracked.
+#### scripts
+General scriptware (unchanged).
 
 ## Publication
 
@@ -57,8 +54,8 @@ If you use CVA6 in your academic work you can cite us:
 }
 ```
 
-CVA6 User Documentation
-=======================
+Table of Contents
+=================
 
    * [CVA6 RISC-V CPU](#cva6-risc-v-cpu)
    * [Table of Contents](#table-of-contents)
@@ -67,9 +64,6 @@ CVA6 User Documentation
         * [Install Verilator Simulation Flow](#install-verilator-simulation-flow)
         * [Build Model and Run Simulations](#build-model-and-run-simulations)
         * [Running User-Space Applications](#running-user-space-applications)
-      * [Physical Implementation](#physical-implementation)
-         * [ASIC Synthesis](#asic-synthesis)
-         * [ASIC Gate Simulation with core-v-verif repository](#asic-gate-simulation-with-core-v-verif-repository)
       * [FPGA Emulation](#fpga-emulation)
          * [Programming the Memory Configuration File](#programming-the-memory-configuration-file)
          * [Preparing the SD Card](#preparing-the-sd-card)
@@ -87,8 +81,6 @@ CVA6 User Documentation
 Created by [gh-md-toc](https://github.com/ekalinin/github-markdown-toc)
 
 ## Getting Started
-
-The following instructions will allow you to compile and run a Verilator model of the CVA6 APU (which instantiates the CVA6 core) within the CVA6 APU testbench (corev_apu/tb).
 
 ### Checkout Repo
 
@@ -179,29 +171,6 @@ make sim elf-bin=$RISCV/riscv64-unknown-elf/bin/pk target-options=hello.elf  bat
 ```
 
 > Be patient! RTL simulation is way slower than Spike. If you think that you ran into problems you can inspect the trace files.
-
-## Physical Implementation
-
-### ASIC Synthesis
-
-How to make cva6 synthesis ?
-```
-make -C pd/synth cva6_synth FOUNDRY_PATH=/your/techno/basepath/ TECH_NAME=yourTechnoName TARGET_LIBRARY_FILES="yourLib1.db\ yourLib2.db" PERIOD=10 NAND2_AREA=650 TARGET=cv64a6_imafdc_sv39 ADDITIONAL_SEARCH_PATH="others/libs/paths/one\ others/libs/paths/two"
-```
-Don't forget to escape spaces in lists.
-Reports are under: pd/synth/ariane/reports
-
-### ASIC Gate Simulation with `core-v-verif` repository
-
-```
-export DV_SIMULATORS=veri-testharness,spike
-cva6/regress/smoke-tests.sh
-make -C core-v-cores/cva6/pd/synth cva6_synth FOUNDRY_PATH=/your/techno/basepath/ TECH_NAME=yourTechnoName TARGET_LIBRARY_FILES="yourLib1.db\ yourLib2.db" PERIOD=10 NAND2_AREA=650 TARGET=cv64a6_imafdc_sv39 ADDITIONAL_SEARCH_PATH="others/libs/paths/one\ others/libs/paths/two"
-sed 's/module SyncSpRamBeNx64_1/module SyncSpRamBeNx64_2/' core-v-cores/cva6/pd/synth/ariane_synth.v > core-v-cores/cva6/pd/synth/ariane_synth_modified.v
-cd cva6/sim
-make vcs_clean
-python3 cva6.py --testlist=../tests/testlist_riscv-tests-cv64a6_imafdc_sv39-p.yaml --test rv64ui-p-ld --iss_yaml cva6.yaml --target cv64a6_imafdc_sv39 --iss=spike,vcs-core-gate $DV_OPTS
-```
 
 ## COREV-APU FPGA Emulation
 

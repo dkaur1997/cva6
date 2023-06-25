@@ -96,7 +96,7 @@ package ariane_pkg;
 
     function automatic logic range_check(logic[63:0] base, logic[63:0] len, logic[63:0] address);
       // if len is a power of two, and base is properly aligned, this check could be simplified
-      return (address >= base) && (address < (65'(base)+len));
+      return (address >= base) && (address < (base+len));
     endfunction : range_check
 
     function automatic logic is_inside_nonidempotent_regions (ariane_cfg_t Cfg, logic[63:0] address);
@@ -132,6 +132,7 @@ package ariane_pkg;
     localparam TRANS_ID_BITS = $clog2(NR_SB_ENTRIES); // depending on the number of scoreboard entries we need that many bits
                                                       // to uniquely identify the entry in the scoreboard
     localparam ASID_WIDTH    = (riscv::XLEN == 64) ? 16 : 1;
+    localparam VMID_WIDTH    = (riscv::XLEN == 64) ? 14 : 1;
     localparam BITS_SATURATION_COUNTER = 2;
     localparam NR_COMMIT_PORTS = 2;
 
@@ -155,7 +156,6 @@ package ariane_pkg;
     // allocate more space for the commit buffer to be on the save side, this needs to be a power of two
     localparam int unsigned DEPTH_COMMIT = 8;
 `endif
-    localparam bit RVC = cva6_config_pkg::CVA6ConfigCExtEn; // Is C extension configuration
 
 `ifdef PITON_ARIANE
     // Floating-point extensions configuration
@@ -208,9 +208,10 @@ package ariane_pkg;
     localparam riscv::xlen_t ARIANE_MARCHID = {{riscv::XLEN-32{1'b0}}, 32'd3};
 
     localparam riscv::xlen_t ISA_CODE = (RVA <<  0)  // A - Atomic Instructions extension
-                                     | (RVC <<  2)  // C - Compressed extension
+                                     | (1   <<  2)  // C - Compressed extension
                                      | (RVD <<  3)  // D - Double precsision floating-point extension
                                      | (RVF <<  5)  // F - Single precsision floating-point extension
+                                     | (1   <<  7)  // H - Hypervisor mode implemented
                                      | (1   <<  8)  // I - RV32I/64I/128I base ISA
                                      | (1   << 12)  // M - Integer Multiply/Divide extension
                                      | (0   << 13)  // N - User level interrupts supported
@@ -221,11 +222,7 @@ package ariane_pkg;
 
     // 32 registers + 1 bit for re-naming = 6
     localparam REG_ADDR_SIZE = 6;
-    localparam NR_WB_PORTS = 5;
-
-    // Read ports for general purpose register files
-    localparam NR_RGPR_PORTS = 2;
-    typedef logic [(NR_RGPR_PORTS == 3 ? riscv::XLEN : FLEN)-1:0] rs3_len_t;
+    localparam NR_WB_PORTS = 4;
 
     // static debug hartinfo
     localparam dm::hartinfo_t DebugHartInfo = '{
@@ -278,17 +275,26 @@ package ariane_pkg;
                                                     | riscv::SSTATUS_FS
                                                     | riscv::SSTATUS_SUM
                                                     | riscv::SSTATUS_MXR;
-    // ---------------
-    // User bits
-    // ---------------
 
-    localparam FETCH_USER_WIDTH = (cva6_config_pkg::CVA6ConfigFetchUserEn == 0) ? 1: cva6_config_pkg::CVA6ConfigFetchUserWidth;  // Possible cases: between 1 and 64
-    localparam DATA_USER_WIDTH = (cva6_config_pkg::CVA6ConfigDataUserEn == 0) ? 1: cva6_config_pkg::CVA6ConfigDataUserWidth;    // Possible cases: between 1 and 64
-    localparam AXI_USER_WIDTH = DATA_USER_WIDTH > FETCH_USER_WIDTH ? DATA_USER_WIDTH : FETCH_USER_WIDTH;
-    localparam DATA_USER_EN = cva6_config_pkg::CVA6ConfigDataUserEn;
-    localparam FETCH_USER_EN = cva6_config_pkg::CVA6ConfigFetchUserEn;
-    localparam AXI_USER_EN = cva6_config_pkg::CVA6ConfigDataUserEn | cva6_config_pkg::CVA6ConfigFetchUserEn;
+    localparam logic [63:0] HSTATUS_WRITE_MASK      = riscv::HSTATUS_VSBE
+                                                    | riscv::HSTATUS_GVA
+                                                    | riscv::HSTATUS_SPV
+                                                    | riscv::HSTATUS_SPVP
+                                                    | riscv::HSTATUS_HU
+                                                    | riscv::HSTATUS_VTVM
+                                                    | riscv::HSTATUS_VTW
+                                                    | riscv::HSTATUS_VTSR;
 
+    localparam logic [63:0] ENVCFG_WRITE_MASK       = riscv::MENVCFG_FIOM;
+
+    // hypervisor delegable interrupts
+    localparam logic [63:0] HS_DELEG_INTERRUPTS     = riscv::MIP_VSSIP
+                                                    | riscv::MIP_VSTIP
+                                                    | riscv::MIP_VSEIP;
+    // virtual supervisor delegable interrupts
+    localparam logic [63:0] VS_DELEG_INTERRUPTS     = riscv::MIP_VSSIP
+                                                    | riscv::MIP_VSTIP
+                                                    | riscv::MIP_VSEIP;
 
     // ---------------
     // Fetch Stage
@@ -298,8 +304,7 @@ package ariane_pkg;
     localparam int unsigned FETCH_FIFO_DEPTH  = 4;
     localparam int unsigned FETCH_WIDTH       = 32;
     // maximum instructions we can fetch on one request (we support compressed instructions)
-    localparam int unsigned INSTR_PER_FETCH = RVC == 1'b1 ? (FETCH_WIDTH / 16) : 1;
-    localparam int unsigned LOG2_INSTR_PER_FETCH = RVC == 1'b1 ? $clog2(ariane_pkg::INSTR_PER_FETCH) : 1;
+    localparam int unsigned INSTR_PER_FETCH = FETCH_WIDTH / 16;
 
     // Only use struct when signals have same direction
     // exception
@@ -307,6 +312,9 @@ package ariane_pkg;
          riscv::xlen_t       cause; // cause of exception
          riscv::xlen_t       tval;  // additional information of causing exception (e.g.: instruction causing it),
                              // address of LD/ST fault
+         riscv::xlen_t       tval2; // additional information when the causing exception in a guest exception
+         riscv::xlen_t       tinst;  // transformed instruction information
+         logic        gva;          // signals when a guest virtual address is written to tval
          logic        valid;
     } exception_t;
 
@@ -375,8 +383,7 @@ package ariane_pkg;
         MULT,      // 5
         CSR,       // 6
         FPU,       // 7
-        FPU_VEC,   // 8
-        CVXIF      // 9
+        FPU_VEC    // 8
     } fu_t;
 
     localparam EXC_OFF_RST      = 8'h80;
@@ -390,6 +397,7 @@ package ariane_pkg;
       riscv::xlen_t       mie;
       riscv::xlen_t       mip;
       riscv::xlen_t       mideleg;
+      riscv::xlen_t       hideleg;
       logic        sie;
       logic        global_enable;
     } irq_ctrl_t;
@@ -437,27 +445,23 @@ package ariane_pkg;
     localparam int unsigned DCACHE_TAG_WIDTH   = riscv::PLEN - DCACHE_INDEX_WIDTH;
 `else
     // I$
-    localparam int unsigned CONFIG_L1I_SIZE    = 16*1024;
+		localparam int unsigned CONFIG_L1I_SIZE    = 16*1024;
     localparam int unsigned ICACHE_SET_ASSOC   = 4; // Must be between 4 to 64
     localparam int unsigned ICACHE_INDEX_WIDTH = $clog2(CONFIG_L1I_SIZE / ICACHE_SET_ASSOC);  // in bit, contains also offset width
     localparam int unsigned ICACHE_TAG_WIDTH   = riscv::PLEN-ICACHE_INDEX_WIDTH;  // in bit
     localparam int unsigned ICACHE_LINE_WIDTH  = 128; // in bit
-    localparam int unsigned ICACHE_USER_LINE_WIDTH  = (AXI_USER_WIDTH == 1) ? 4 : 128; // in bit
     // D$
-    localparam int unsigned CONFIG_L1D_SIZE    = 32*1024;
-    localparam int unsigned DCACHE_SET_ASSOC   = 8; // Must be between 4 to 64
+		localparam int unsigned CONFIG_L1D_SIZE    = 32*1024;
+	  localparam int unsigned DCACHE_SET_ASSOC   = 8; // Must be between 4 to 64
     localparam int unsigned DCACHE_INDEX_WIDTH = $clog2(CONFIG_L1D_SIZE / DCACHE_SET_ASSOC);  // in bit, contains also offset width
     localparam int unsigned DCACHE_TAG_WIDTH   = riscv::PLEN-DCACHE_INDEX_WIDTH;  // in bit
     localparam int unsigned DCACHE_LINE_WIDTH  = 128; // in bit
-    localparam int unsigned DCACHE_USER_LINE_WIDTH  = (AXI_USER_WIDTH == 1) ? 4 : 128; // in bit
-    localparam int unsigned DCACHE_USER_WIDTH  = DATA_USER_WIDTH;
 `endif
 
-    localparam bit CVXIF_PRESENT = cva6_config_pkg::CVA6ConfigCvxifEn;
     // ---------------
     // EX Stage
     // ---------------
-    typedef enum logic [6:0] { // basic ALU op
+    typedef enum logic [7:0] { // basic ALU op
                                ADD, SUB, ADDW, SUBW,
                                // logic operations
                                XORL, ORL, ANDL,
@@ -470,9 +474,11 @@ package ariane_pkg;
                                // set lower than operations
                                SLTS, SLTU,
                                // CSR functions
-                               MRET, SRET, DRET, ECALL, WFI, FENCE, FENCE_I, SFENCE_VMA, CSR_WRITE, CSR_READ, CSR_SET, CSR_CLEAR,
+                               MRET, SRET, DRET, ECALL, WFI, FENCE, FENCE_I, SFENCE_VMA, HFENCE_VVMA, HFENCE_GVMA, CSR_WRITE, CSR_READ, CSR_SET, CSR_CLEAR, FENCE_T,
                                // LSU functions
                                LD, SD, LW, LWU, SW, LH, LHU, SH, LB, SB, LBU,
+                               // Hypervisor Virtual-Machine Load and Store Instructions
+                               HLV_B, HLV_BU, HLV_H, HLV_HU, HLVX_HU, HLV_W, HLVX_WU, HSV_B, HSV_H, HSV_W, HLV_WU, HLV_D, HSV_D,
                                // Atomic Memory Operations
                                AMO_LRW, AMO_LRD, AMO_SCW, AMO_SCD,
                                AMO_SWAPW, AMO_ADDW, AMO_ANDW, AMO_ORW, AMO_XORW, AMO_MAXW, AMO_MAXWU, AMO_MINW, AMO_MINWU,
@@ -492,9 +498,7 @@ package ariane_pkg;
                                // Floating-Point Classify Instruction
                                FCLASS,
                                // Vectorial Floating-Point Instructions that don't directly map onto the scalar ones
-                               VFMIN, VFMAX, VFSGNJ, VFSGNJN, VFSGNJX, VFEQ, VFNE, VFLT, VFGE, VFLE, VFGT, VFCPKAB_S, VFCPKCD_S, VFCPKAB_D, VFCPKCD_D,
-                               // Offload Instructions to be directed into cv_x_if
-                               OFFLOAD
+                               VFMIN, VFMAX, VFSGNJ, VFSGNJN, VFSGNJX, VFEQ, VFNE, VFLT, VFGE, VFLE, VFGT, VFCPKAB_S, VFCPKCD_S, VFCPKAB_D, VFCPKCD_D
                              } fu_op;
 
     typedef struct packed {
@@ -589,14 +593,18 @@ package ariane_pkg;
     endfunction
 
     typedef struct packed {
-        logic                           valid;
-        logic [riscv::VLEN-1:0]         vaddr;
-        logic                           overflow;
-        riscv::xlen_t                   data;
-        logic [(riscv::XLEN/8)-1:0]     be;
-        fu_t                            fu;
-        fu_op                           operator;
-        logic [TRANS_ID_BITS-1:0]       trans_id;
+        logic                     valid;
+        logic [riscv::VLEN-1:0]   vaddr;
+        logic [riscv::XLEN-1:0]   tinst;
+        logic                     hs_ld_st_inst;
+        logic                     hlvx_inst;
+        logic                     overflow;
+        logic                     g_overflow;
+        logic [63:0]              data;
+        logic [7:0]               be;
+        fu_t                      fu;
+        fu_op                     operator;
+        logic [TRANS_ID_BITS-1:0] trans_id;
     } lsu_ctrl_t;
 
     // ---------------
@@ -665,9 +673,16 @@ package ariane_pkg;
         logic                  valid;      // valid flag
         logic                  is_2M;      //
         logic                  is_1G;      //
-        logic [27-1:0]         vpn;        // VPN (39bits) = 27bits + 12bits offset
+        logic                  is_s_2M;
+        logic                  is_s_1G;
+        logic                  is_g_2M;
+        logic                  is_g_1G;
+        logic [26:0]           vpn;
+        logic [28:0]           gppn;
         logic [ASID_WIDTH-1:0] asid;
+        logic [VMID_WIDTH-1:0] vmid;
         riscv::pte_t           content;
+        riscv::pte_t           g_content;
     } tlb_update_t;
 
     // Bits required for representation of physical address space as 4K pages
@@ -685,7 +700,8 @@ package ariane_pkg;
     typedef enum logic [1:0] {
       FE_NONE,
       FE_INSTR_ACCESS_FAULT,
-      FE_INSTR_PAGE_FAULT
+      FE_INSTR_PAGE_FAULT,
+      FE_INSTR_GUEST_PAGE_FAULT
     } frontend_exception_t;
 
     // ----------------------
@@ -716,7 +732,6 @@ package ariane_pkg;
         logic                     ready;                  // icache is ready
         logic                     valid;                  // signals a valid read
         logic [FETCH_WIDTH-1:0]   data;                   // 2+ cycle out: tag
-        logic [FETCH_USER_WIDTH-1:0] user;                // User bits
         logic [riscv::VLEN-1:0]   vaddr;                  // virtual address out
         exception_t               ex;                     // we've encountered an exception
     } icache_dreq_o_t;
@@ -743,11 +758,10 @@ package ariane_pkg;
     typedef struct packed {
         logic [DCACHE_INDEX_WIDTH-1:0] address_index;
         logic [DCACHE_TAG_WIDTH-1:0]   address_tag;
-        riscv::xlen_t                  data_wdata;
-        logic [DCACHE_USER_WIDTH-1:0]  data_wuser;
+        logic [63:0]                   data_wdata;
         logic                          data_req;
         logic                          data_we;
-        logic [(riscv::XLEN/8)-1:0]    data_be;
+        logic [7:0]                    data_be;
         logic [1:0]                    data_size;
         logic                          kill_req;
         logic                          tag_valid;
@@ -756,8 +770,7 @@ package ariane_pkg;
     typedef struct packed {
         logic                          data_gnt;
         logic                          data_rvalid;
-        riscv::xlen_t                  data_rdata;
-        logic [DCACHE_USER_WIDTH-1:0]  data_ruser;
+        logic [63:0]                   data_rdata;
     } dcache_req_o_t;
 
     // ----------------------
@@ -845,38 +858,12 @@ package ariane_pkg;
         return 8'b0;
     endfunction
 
-    function automatic logic [3:0] be_gen_32(logic [1:0] addr, logic [1:0] size);
-        case (size)
-            2'b10: begin
-                return 4'b1111;
-            end
-            2'b01: begin
-                case (addr[1:0])
-                    2'b00: return 4'b0011;
-                    2'b01: return 4'b0110;
-                    2'b10: return 4'b1100;
-
-                endcase
-            end
-            2'b00: begin
-                case (addr[1:0])
-                    2'b00: return 4'b0001;
-                    2'b01: return 4'b0010;
-                    2'b10: return 4'b0100;
-                    2'b11: return 4'b1000;
-                endcase
-            end
-            default: return 4'b0;
-        endcase
-        return 4'b0;
-    endfunction
-
     // ----------------------
     // Extract Bytes from Op
     // ----------------------
     function automatic logic [1:0] extract_transfer_size(fu_op op);
         case (op)
-            LD, SD, FLD, FSD,
+            LD, HLV_D, SD, HSV_D, FLD, FSD,
             AMO_LRD,   AMO_SCD,
             AMO_SWAPD, AMO_ADDD,
             AMO_ANDD,  AMO_ORD,
@@ -885,7 +872,8 @@ package ariane_pkg;
             AMO_MINDU: begin
                 return 2'b11;
             end
-            LW, LWU, SW, FLW, FSW,
+            LW, LWU, HLV_W, HLV_WU, HLVX_WU,
+            SW, HSV_W, FLW, FSW,
             AMO_LRW,   AMO_SCW,
             AMO_SWAPW, AMO_ADDW,
             AMO_ANDW,  AMO_ORW,
@@ -894,9 +882,8 @@ package ariane_pkg;
             AMO_MINWU: begin
                 return 2'b10;
             end
-            LH, LHU, SH, FLH, FSH: return 2'b01;
-            LB, LBU, SB, FLB, FSB: return 2'b00;
-            default:     return 2'b11;
+            LH, LHU, HLV_H, HLV_HU, HLVX_HU, SH, HSV_H, FLH, FSH: return 2'b01;
+            LB, LBU, HLV_B, HLV_BU, SB, HSV_B, FLB, FSB: return 2'b00;
         endcase
     endfunction
 endpackage
