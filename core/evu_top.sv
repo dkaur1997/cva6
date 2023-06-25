@@ -29,8 +29,8 @@ module evu_top import ariane_pkg::*; #(
   input  exception_t                              ex_i,
   input  logic                                    eret_i,
   input  bp_resolve_t                             resolved_branch_i
-  input ariane_axi_soc::req_lite_t  axi_evu_cfg_req_i,
-  output ariane_axi_soc::resp_lite_t axi_evu_cfg_resp_o,
+  input req_lite_t  axi_evu_cfg_req_i,
+  output resp_lite_t axi_evu_cfg_resp_o,
   input riscv::priv_lvl_t priv_lvl_i,
   input logic [ASID_WIDTH-1:0]   asid_i,
   SPU_INTF.Output        evu_output

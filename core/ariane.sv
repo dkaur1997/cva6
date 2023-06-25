@@ -39,8 +39,8 @@ module ariane import ariane_pkg::*; #(
   input  logic                         time_irq_i,   // timer interrupt in (async)
   input  logic                         debug_req_i,  // debug request (async)
   //EVU
-  input ariane_axi::req_lite_t axi_evu_conf_req_i, //AXI input to evu_top
-  output ariane_axi::resp_lite_t axi_evu_conf_resp_o, //AXI output to evu_top
+  input ariane_axi::req_t axi_evu_conf_req_i, //AXI input to evu_top
+  output ariane_axi::resp_t axi_evu_conf_resp_o, //AXI output to evu_top
   SPU_INTF.Output        evu_output,
 `ifdef FIRESIM_TRACE
   // firesim trace port
