@@ -131,7 +131,6 @@ evu_mux evu_mux4(.commit_instr_i(commit_instr_i), .commit_ack_i(commit_ack_i),
  .resolved_branch_i(resolved_branch_i), .sel_line(reg_q.StructMap.sel_line_reg[3:0]), .evu_mux_output(evu_mux3_output) );
 
 always_comb @(*) begin
-    
     evu_output.e_id= {evu_mux3_output, evu_mux2_output, evu_mux1_output, evu_mux0_output};
     evu_output.e_info= {priv_lvl_o, asid_i};
     evu_output.s_id=1'b0;
