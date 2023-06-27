@@ -31,7 +31,6 @@ sources:
     - core/include/wt_cache_pkg.sv
     - core/include/ariane_axi_pkg.sv
     # Stand-alone source files
-
     - core/ariane.sv
     - core/serdiv.sv
     - core/ariane_regfile_ff.sv
