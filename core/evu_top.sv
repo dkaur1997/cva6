@@ -28,7 +28,7 @@ module evu_top import ariane_pkg::*; #(
   // from PC Gen
   input  exception_t                              ex_i,
   input  logic                                    eret_i,
-  input  bp_resolve_t                             resolved_branch_i
+  input  bp_resolve_t                             resolved_branch_i,
   input lite_req_t  axi_evu_cfg_req_i,
   output lite_resp_t axi_evu_cfg_resp_o,
   input riscv::priv_lvl_t priv_lvl_i,
