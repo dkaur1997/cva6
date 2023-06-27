@@ -47,6 +47,8 @@ sources:
     - core/mmu_sv39/tlb.sv
     - core/decoder.sv
     - core/scoreboard.sv
+    - core/evu_mux.sv
+    - core/evu_top.sv
     - core/perf_counters.sv
     - core/store_unit.sv
     - core/axi_adapter.sv
@@ -88,5 +90,4 @@ sources:
     - core/cache_subsystem/cva6_icache_axi_wrapper.sv
     - core/cache_subsystem/std_cache_subsystem.sv
     - core/cache_subsystem/wt_dcache.sv
-    - core/evu_mux.sv
-    - core/evu_top.sv
+
