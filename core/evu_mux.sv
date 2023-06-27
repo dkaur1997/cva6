@@ -28,35 +28,35 @@ initial begin
   evu_mux_output=1'b0;
 end
 
-  always_comb @(*) begin
-    case sel_line:
-    4'b0000:begin  end
-    4'b0001:begin  end
-    4'b0010: begin //I$ miss
+  always @(sel_line) begin
+    //case (sel_line)
+    //4'b0000:begin  end
+    //4'b0001:begin  end
+    if(sel_line==4'b0010) begin //I$ miss
              if (l1_icache_miss) begin
               evu_mux_output=1'b1;
               end
             else evu_mux_output=1'b0;
             end
-    4'b0011: begin //D$ miss
+    else if (sel_line=-4'b0011) begin //D$ miss
              if (l1_dcache_miss) begin
               evu_mux_output=1'b1;
               end
             else evu_mux_output=1'b0;
             end
-    4'b0100: begin //ITLB_miss
+    else if (sel_line==4'b0100) begin //ITLB_miss
              if (itlb_miss_i) begin
               evu_mux_output=1'b1;
               end
             else evu_mux_output=1'b0;
             end
-    4'b0101: begin //DTLB_miss
+    else if (sel_line==4'b0101) begin //DTLB_miss
              if (dtlb_miss_i) begin
               evu_mux_output=1'b1;
               end
             else evu_mux_output=1'b0;
             end
-    4'b0110: begin //Loads
+    else if (sel_line==4'b0110) begin //Loads
             for (int unsigned i = 0; i < NR_COMMIT_PORTS; i++) begin
              if(commit_ack_i[i])begin
                 if (commit_instr_i[i].fu == LOAD)
@@ -64,7 +64,7 @@ end
               end
             end
     end
-    4'b0111: begin //Stores
+    else if (sel_line==4'b0111) begin //Stores
             for (int unsigned i = 0; i < NR_COMMIT_PORTS; i++) begin
              if(commit_ack_i[i])begin
                 if (commit_instr_i[i].fu == STORE)
@@ -72,19 +72,19 @@ end
               end
             end
     end
-    4'b1000:begin //Taken Exceptions
+    else if (sel_line==4'b1000) begin //Taken Exceptions
             if (ex_i.valid)begin
             evu_mux_output=1'b1;
             end
             else evu_mux_output=1'b0;
     end
-    4'b1001: begin //Exceptions Returned
+    else if (sel_line==4'b1001) begin //Exceptions Returned
              if (eret_i)begin
              evu_mux_output=1'b1;
              end
              else evu_mux_output=1'b0;
     end
-    4'b1010: begin //Branches and Jumps
+    else if (sel_line==4'b1010) begin //Branches and Jumps
             for (int unsigned i = 0; i < NR_COMMIT_PORTS; i++) begin
              if(commit_ack_i[i])begin
                 if (commit_instr_i[i].fu == CTRL_FLOW)
@@ -93,7 +93,7 @@ end
             end  
     
     end
-    4'b1011:begin //Calls
+    else if (sel_line==4'b1011) begin //Calls
             for (int unsigned i = 0; i < NR_COMMIT_PORTS; i++) begin
              if(commit_ack_i[i])begin
                 if (commit_instr_i[i].fu == CTRL_FLOW && (commit_instr_i[i].op == '0 || commit_instr_i[i].op == JALR) && (commit_instr_i[i].rd == 'd1 || commit_instr_i[i].rd == 'd5) )
@@ -101,7 +101,7 @@ end
              end
             end         
     end
-    4'b1100:begin //Returns
+    else if (sel_line==4'b1100) begin //Returns
              for (int unsigned i = 0; i < NR_COMMIT_PORTS; i++) begin
              if(commit_ack_i[i])begin
                 if (commit_instr_i[i].op == JALR && (commit_instr_i[i].rd == 'd0))
@@ -109,25 +109,25 @@ end
               end
             end
     end
-    4'b1101:begin //Mispreducted Branches
+    else if (sel_line==4'b1101) begin //Mispreducted Branches
              if (resolved_branch_i.valid && resolved_branch_i.is_mispredict) begin
              evu_mux_output=1'b1;
              end
              else evu_mux_output=1'b0;
     end
-    4'b1110:begin //Scoreboard Full
+    else if (sel_line==4'b1110) begin //Scoreboard Full
              if (sb_full_i) begin
              evu_mux_output=1'b1;
              end
              else evu_mux_output=1'b0;
     end
-    4'b1111:begin //Instruction Fetch Empty
+    else if (sel_line==4'b1111) begin //Instruction Fetch Empty
              if (if_empty_i) begin
              evu_mux_output=1'b1;
              end
              else evu_mux_output=1'b0;
     end
-  endcase
+    else evu_mux_output=1'b0;
 end
 
 
