@@ -72,7 +72,7 @@ typedef logic [(REG_WIDTH/8):0]  strb_reg_t;
     union_reg_data_t    reg_d, reg_q;
     union_strb_data_t   reg_wr_o;
     union_strb_data_t   reg_load_i;
-
+    localparam strb_map_t RstVal = 0;
     axi_lite_regs#(
         .RegNumBytes  ( NumBytesCfgRegs     ),
         .AxiAddrWidth ( AxiLiteAddrWidth    ),
