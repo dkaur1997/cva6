@@ -12,7 +12,7 @@ dependencies:
   axi: { git: "https://github.com/pulp-platform/axi.git", version: 0.29.1 } 
   tech_cells_generic: { git: "https://github.com/pulp-platform/tech_cells_generic.git", version: 0.2.7 }
   riscv-dbg: { git: "git@github.com:Alsaqr-platform/riscv-dbg.git", version: 0.4.1 }
-
+  spu: { git: "git@github.com:Arshaan-256/spu.git", rev: "master" }
 
 sources:
   - defines:
@@ -31,6 +31,7 @@ sources:
     - core/include/wt_cache_pkg.sv
     - core/include/ariane_axi_pkg.sv
     # Stand-alone source files
+
     - core/ariane.sv
     - core/serdiv.sv
     - core/ariane_regfile_ff.sv
@@ -52,6 +53,8 @@ sources:
     - core/axi_adapter.sv
     - core/fpu_wrap.sv
     - core/csr_regfile.sv
+    - core/evu_top.sv
+    - core/evu_mux.sv
     - core/commit_stage.sv
     - core/alu.sv
     - core/multiplier.sv
@@ -88,3 +91,4 @@ sources:
     - core/cache_subsystem/cva6_icache_axi_wrapper.sv
     - core/cache_subsystem/std_cache_subsystem.sv
     - core/cache_subsystem/wt_dcache.sv
+

@@ -2,7 +2,8 @@
 // Date: 27.05.2023
 // Description: Performance counters interface
 
-module evu_top import ariane_pkg::*; #(    
+module evu_top import ariane_pkg::*; #(   
+    parameter ariane_pkg::ariane_cfg_t ArianeCfg     = ariane_pkg::ArianeDefaultConfig, 
     parameter int unsigned ASID_WIDTH = 0,
     parameter int unsigned NUM_SEL_LINE_REG = 1,
     parameter int unsigned AxiLiteAddrWidth = 32'd0,
@@ -28,7 +29,7 @@ module evu_top import ariane_pkg::*; #(
   // from PC Gen
   input  exception_t                              ex_i,
   input  logic                                    eret_i,
-  input  bp_resolve_t                             resolved_branch_i
+  input  bp_resolve_t                             resolved_branch_i,
   input lite_req_t  axi_evu_cfg_req_i,
   output lite_resp_t axi_evu_cfg_resp_o,
   input riscv::priv_lvl_t priv_lvl_i,
@@ -130,10 +131,10 @@ evu_mux evu_mux4(.commit_instr_i(commit_instr_i), .commit_ack_i(commit_ack_i),
  .if_empty_i(if_empty_i), .ex_i(ex_i), .eret_i(eret_i), 
  .resolved_branch_i(resolved_branch_i), .sel_line(reg_q.StructMap.sel_line_reg[3:0]), .evu_mux_output(evu_mux3_output) );
 
-always_comb @(*) begin
-    evu_output.e_id= {evu_mux3_output, evu_mux2_output, evu_mux1_output, evu_mux0_output};
-    evu_output.e_info= {priv_lvl_o, asid_i};
-    evu_output.s_id=1'b0;
-end
+
+    assign evu_output.e_id= {evu_mux3_output, evu_mux2_output, evu_mux1_output, evu_mux0_output};
+    assign vu_output.e_info= {priv_lvl_o, asid_i};
+    assign evu_output.s_id=1'b0;
+
 
 endmodule
