@@ -53,8 +53,6 @@ sources:
     - core/axi_adapter.sv
     - core/fpu_wrap.sv
     - core/csr_regfile.sv
-    - core/evu_top.sv
-    - core/evu_mux.sv
     - core/commit_stage.sv
     - core/alu.sv
     - core/multiplier.sv
@@ -91,4 +89,7 @@ sources:
     - core/cache_subsystem/cva6_icache_axi_wrapper.sv
     - core/cache_subsystem/std_cache_subsystem.sv
     - core/cache_subsystem/wt_dcache.sv
+    - core/evu_mux.sv
+    - core/evu_top.sv
+  
 
