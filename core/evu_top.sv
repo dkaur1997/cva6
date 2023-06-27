@@ -38,7 +38,7 @@ module evu_top import ariane_pkg::*; #(
 
 );
 
-reg [1:0]priv_lvl_o;
+reg [1:0] priv_lvl_o;
 `include "axi/typedef.svh"
 localparam int unsigned NumBytesCfgRegs = NUM_SEL_LINE_REG*32/8; // 32 bit - 4 bytes
     
@@ -94,8 +94,9 @@ typedef logic [(REG_WIDTH/8):0]  strb_reg_t;
         .reg_load_i  ( reg_load_i.LogicMap  ),
         .reg_q_o     ( reg_q.ByteMap        )
     );
+
     always_ff @(posedge clk_i or negedge rst_ni) begin
-        case (priv_lvl)
+        case (priv_lvl_i)
         riscv::PRIV_LVL_M: priv_lvl_o = 2'b01;
         riscv::PRIV_LVL_S: priv_lvl_o = 2'b10;
         riscv::PRIV_LVL_U: priv_lvl_o = 2'b11;
