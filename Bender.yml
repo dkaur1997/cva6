@@ -31,8 +31,7 @@ sources:
     - core/include/wt_cache_pkg.sv
     - core/include/ariane_axi_pkg.sv
     # Stand-alone source files
-    - core/evu_mux.sv
-    - core/evu_top.sv
+
     - core/ariane.sv
     - core/serdiv.sv
     - core/ariane_regfile_ff.sv
@@ -54,6 +53,8 @@ sources:
     - core/axi_adapter.sv
     - core/fpu_wrap.sv
     - core/csr_regfile.sv
+    - core/evu_top.sv
+    - core/evu_mux.sv
     - core/commit_stage.sv
     - core/alu.sv
     - core/multiplier.sv
