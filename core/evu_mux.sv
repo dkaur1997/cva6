@@ -19,10 +19,10 @@ module evu_mux import ariane_pkg::*; (
   // from PC Gen
   input  exception_t                              ex_i,
   input  logic                                    eret_i,
-  input  bp_resolve_t                             resolved_branch_i
+  input  bp_resolve_t                             resolved_branch_i,
 
   input logic [3:0]sel_line,
-  output logic evu_mux_output;
+  output logic evu_mux_output
 );
 initial begin
   evu_mux_output=1'b0;
