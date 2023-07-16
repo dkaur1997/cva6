@@ -3,7 +3,9 @@
 // Description: Performance counters interface
 
 module evu_mux import ariane_pkg::*; (
-    // from commit stage
+  input logic                                     clk_i,
+  input logic                                     rst_ni,
+      // from commit stage
   input  scoreboard_entry_t [NR_COMMIT_PORTS-1:0] commit_instr_i,     // the instruction we want to commit
   input  logic [NR_COMMIT_PORTS-1:0]              commit_ack_i,       // acknowledge that we are indeed committing
     // from L1 caches
@@ -28,11 +30,11 @@ initial begin
   evu_mux_output=1'b0;
 end
 int unsigned i = 0;
-  always @(sel_line) begin
-    //case (sel_line)
-    //4'b0000:begin  end
-    //4'b0001:begin  end
-    if(sel_line==4'b0010) begin //I$ miss
+  always @(clk_i) begin
+    if(~rst_ni)begin
+      evu_mux_output=1'bx;
+    end
+    else if(sel_line==4'b0010) begin //I$ miss
              if (l1_icache_miss_i) begin
               evu_mux_output=1'b1;
               end

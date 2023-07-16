@@ -156,6 +156,7 @@ module load_store_unit import ariane_pkg::*; #(
 
     logic                     hs_ld_st_inst;
     logic                     hlvx_inst;
+
     // -------------------
     // MMU e.g.: TLBs/PTW
     // -------------------
@@ -193,9 +194,11 @@ module load_store_unit import ariane_pkg::*; #(
             // Hypervisor load/store signals
             .hlvx_inst_i            ( mmu_hlvx_inst          ),
             .hs_ld_st_inst_i        ( mmu_hs_ld_st_inst      ),
+            .itlb_miss_o            ( itlb_miss_o            ),
+            .dtlb_miss_o            ( dtlb_miss_o            ),
             .*
         );
-    end else if (MMU_PRESENT && (riscv::XLEN == 32)) begin : gen_mmu_sv32
+    end /*else if (MMU_PRESENT && (riscv::XLEN == 32)) begin : gen_mmu_sv32
         cva6_mmu_sv32 #(
             .INSTR_TLB_ENTRIES      ( 16                     ),
             .DATA_TLB_ENTRIES       ( 16                     ),
@@ -224,7 +227,7 @@ module load_store_unit import ariane_pkg::*; #(
             .pmpaddr_i,
             .*
         );
-    end else begin : gen_no_mmu
+    end*/ else begin : gen_no_mmu
         assign  icache_areq_o.fetch_valid  = icache_areq_i.fetch_req;
         assign  icache_areq_o.fetch_paddr  = icache_areq_i.fetch_vaddr[riscv::PLEN-1:0];
         assign  icache_areq_o.fetch_exception      = '0;
