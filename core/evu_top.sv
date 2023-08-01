@@ -5,9 +5,10 @@
 module evu_top 
 import ariane_pkg::*;
 import ariane_axi_soc::*; #(   
- //   parameter ariane_pkg::ariane_cfg_t ArianeCfg     = ariane_pkg::ArianeDefaultConfig, 
+    parameter ariane_pkg::ariane_cfg_t ArianeCfg     = ariane_pkg::ArianeDefaultConfig, 
     parameter int unsigned ASID_WIDTH = 0,
     parameter int unsigned NUM_SEL_LINE_REG = 1,
+    parameter int unsigned NUM_PC_REG = 1,
     parameter int unsigned AxiLiteAddrWidth = 32'd32,
     parameter int unsigned AxiLiteDataWidth = 32'd32
    //parameter type lite_req_t     = logic,
@@ -36,45 +37,62 @@ import ariane_axi_soc::*; #(
   output ariane_axi_soc::resp_lite_t              axi_evu_cfg_resp_o,
   input riscv::priv_lvl_t                         priv_lvl_i,
   input logic [ASID_WIDTH-1:0]                    asid_i,
-  SPU_INTF.Output                                 evu_output
-
+  SPU_INTF.Output                                 evu_output,
+  input logic [riscv::VLEN-1:0]                   pc_commit_i,
+  input  logic                                    debug_mode_i
 );
 
 reg [1:0] priv_lvl_o;
+logic [riscv::VLEN-1:0] pc_1_compare_reg;
+logic [riscv::VLEN-1:0] pc_2_compare_reg;
+logic [riscv::VLEN-1:0] pc_3_compare_reg;
+logic [riscv::VLEN-1:0] pc_4_compare_reg;
 
 localparam int unsigned NumBytesCfgRegs = NUM_SEL_LINE_REG*32/8; // 32 bit - 4 bytes
+localparam int unsigned NumBytesPCRegs = 4;
     
 // Memory Map - Local Parameters and TypeDefs
 localparam int unsigned REG_WIDTH = 32;
 typedef logic [7:0] byte_t;
 typedef logic [REG_WIDTH-1:0]   reg_t;
+//typedef logic [REG_WIDTH-1:0]   reg_pc_t;
 typedef logic [NumBytesCfgRegs-1:0]  strb_reg_t;
-//reg_t sel_line_reg;
+//typedef logic [NumBytesPCRegs-1:0]  strb_reg_pc_t;
 
-//initial begin
-//    sel_line_reg='0;
-//end
-
-//assign sel_line_reg = reg_q.StructMap.sel_line_reg;
-    typedef struct packed {
-        reg_t            sel_line_reg;        
+    typedef struct packed {          
+        reg_t            pc_4_compare_reg_msb;     
+        reg_t            pc_4_compare_reg_lsb; 
+        reg_t            pc_3_compare_reg_msb;     
+        reg_t            pc_3_compare_reg_lsb; 
+        reg_t            pc_2_compare_reg_msb;     
+        reg_t            pc_2_compare_reg_lsb; 
+        reg_t            pc_1_compare_reg_msb;     
+        reg_t            pc_1_compare_reg_lsb; 
+        reg_t            sel_line_reg;
     } reg_map_t; 
 
     typedef struct packed {
-        strb_reg_t       sel_line_reg;        
+        strb_reg_t            pc_4_compare_reg_msb;     
+        strb_reg_t            pc_4_compare_reg_lsb; 
+        strb_reg_t            pc_3_compare_reg_msb;     
+        strb_reg_t            pc_3_compare_reg_lsb; 
+        strb_reg_t            pc_2_compare_reg_msb;     
+        strb_reg_t            pc_2_compare_reg_lsb; 
+        strb_reg_t            pc_1_compare_reg_msb;
+        strb_reg_t            pc_1_compare_reg_lsb;
+        strb_reg_t            sel_line_reg;  
     } strb_map_t; 
     
     typedef union packed {
-        byte_t              [NumBytesCfgRegs-1:0]   ByteMap;
-        reg_map_t                                   StructMap;
+        byte_t              [(NumBytesCfgRegs*9)-1:0]   ByteMap;
+        reg_map_t                                       StructMap;
     } union_reg_data_t;
 
     typedef union packed {
-        logic               [NumBytesCfgRegs-1:0]   LogicMap;
-        strb_map_t                                  StrbMap;
+        logic               [(NumBytesCfgRegs*9)-1:0]   LogicMap;
+        strb_map_t                                      StrbMap;
     } union_strb_data_t;
-     
-
+    
     
     // ************************************************************************
     // AXI4-Lite Registers
@@ -83,9 +101,31 @@ typedef logic [NumBytesCfgRegs-1:0]  strb_reg_t;
     union_strb_data_t   reg_wr_o;
     union_strb_data_t   reg_load_i;
     localparam strb_map_t RstVal = 0;
-    localparam strb_map_t strb_ReadOnly=strb_map_t'{sel_line_reg: {NumBytesCfgRegs{4}}, default: 0};
+    localparam strb_map_t strb_ReadOnly=strb_map_t'{
+        sel_line_reg: {NumBytesCfgRegs{4}},
+        pc_1_compare_reg_lsb:{NumBytesPCRegs{4}},
+        pc_1_compare_reg_msb:{NumBytesPCRegs{4}},
+        pc_2_compare_reg_lsb:{NumBytesPCRegs{4}},
+        pc_2_compare_reg_msb:{NumBytesPCRegs{4}},
+        pc_3_compare_reg_lsb:{NumBytesPCRegs{4}},
+        pc_3_compare_reg_msb:{NumBytesPCRegs{4}},
+        pc_4_compare_reg_lsb:{NumBytesPCRegs{4}},
+        pc_4_compare_reg_msb:{NumBytesPCRegs{4}},
+        default: 0};
     localparam union_strb_data_t ReadOnly =strb_ReadOnly;
- 
+
+    // wr_active_o is asserted on the clock cycle at 
+    // which the AXI4 write take places. 
+    // Need to register it, to update the counter after the write. 
+    strb_map_t   reg_wr_r;
+
+    always_ff @ (posedge clk_i) begin
+        if (!rst_ni) begin
+            reg_wr_r <= 0;
+        end else begin
+            reg_wr_r <= reg_wr_o.StrbMap;
+        end
+    end
 
     always_ff @(posedge clk_i or negedge rst_ni) begin
         case (priv_lvl_i)
@@ -102,11 +142,28 @@ typedef logic [NumBytesCfgRegs-1:0]  strb_reg_t;
     // to that register in that clock cycle is stalled.
     always_comb begin
         reg_load_i.StrbMap.sel_line_reg     = 0;
+        reg_load_i.StrbMap.pc_1_compare_reg_lsb = 0;
+        reg_load_i.StrbMap.pc_1_compare_reg_msb = 0;
+        reg_load_i.StrbMap.pc_2_compare_reg_lsb = 0;
+        reg_load_i.StrbMap.pc_2_compare_reg_msb = 0;
+        reg_load_i.StrbMap.pc_3_compare_reg_lsb = 0;
+        reg_load_i.StrbMap.pc_3_compare_reg_msb = 0;
+        reg_load_i.StrbMap.pc_4_compare_reg_lsb = 0;
+        reg_load_i.StrbMap.pc_4_compare_reg_msb = 0;
         reg_d.StructMap.sel_line_reg = reg_q.StructMap.sel_line_reg;
+        reg_d.StructMap.pc_1_compare_reg_lsb = reg_q.StructMap.pc_1_compare_reg_lsb;
+        reg_d.StructMap.pc_1_compare_reg_msb = reg_q.StructMap.pc_1_compare_reg_msb;
+        reg_d.StructMap.pc_1_compare_reg_lsb = reg_q.StructMap.pc_2_compare_reg_lsb;
+        reg_d.StructMap.pc_1_compare_reg_msb = reg_q.StructMap.pc_2_compare_reg_msb;
+        reg_d.StructMap.pc_1_compare_reg_lsb = reg_q.StructMap.pc_3_compare_reg_lsb;
+        reg_d.StructMap.pc_1_compare_reg_msb = reg_q.StructMap.pc_3_compare_reg_msb;
+        reg_d.StructMap.pc_1_compare_reg_lsb = reg_q.StructMap.pc_4_compare_reg_lsb;
+        reg_d.StructMap.pc_1_compare_reg_msb = reg_q.StructMap.pc_4_compare_reg_msb;
+
     end
 
-       axi_lite_regs#(
-        .RegNumBytes  ( NumBytesCfgRegs     ),
+    axi_lite_regs#(
+        .RegNumBytes  ( NumBytesCfgRegs*9     ),
         .AxiAddrWidth ( AxiLiteAddrWidth    ),
         .AxiDataWidth ( AxiLiteDataWidth    ),
         .PrivProtOnly ( 1'b0                ),
@@ -147,7 +204,8 @@ evu_mux evu_mux0(
     .eret_i(eret_i), 
     .resolved_branch_i(resolved_branch_i), 
     .sel_line(reg_q.StructMap.sel_line_reg[3:0]), 
-    .evu_mux_output(evu_mux0_output) );
+    .evu_mux_output(evu_mux0_output), 
+    .debug_mode_i(debug_mode_i));
 
 evu_mux evu_mux1(
     .clk_i (clk_i),
@@ -164,7 +222,8 @@ evu_mux evu_mux1(
     .eret_i(eret_i), 
     .resolved_branch_i(resolved_branch_i), 
     .sel_line(reg_q.StructMap.sel_line_reg[7:4]), 
-    .evu_mux_output(evu_mux1_output) );
+    .evu_mux_output(evu_mux1_output) ,
+    .debug_mode_i(debug_mode_i));
 
 evu_mux evu_mux2(
     .clk_i (clk_i),
@@ -181,7 +240,8 @@ evu_mux evu_mux2(
     .eret_i(eret_i), 
     .resolved_branch_i(resolved_branch_i), 
     .sel_line(reg_q.StructMap.sel_line_reg[11:8]), 
-    .evu_mux_output(evu_mux2_output) );
+    .evu_mux_output(evu_mux2_output),
+    .debug_mode_i(debug_mode_i) );
 
 evu_mux evu_mux3(
     .clk_i (clk_i),
@@ -198,14 +258,47 @@ evu_mux evu_mux3(
     .eret_i(eret_i), 
     .resolved_branch_i(resolved_branch_i), 
     .sel_line(reg_q.StructMap.sel_line_reg[15:12]), 
-    .evu_mux_output(evu_mux3_output) );
+    .evu_mux_output(evu_mux3_output),
+    .debug_mode_i(debug_mode_i) );
+
+logic pc_comparator_o;
+logic [1:0] counter_no_o;
 
 
-assign evu_output.e_id= {evu_mux3_output, evu_mux2_output, evu_mux1_output, evu_mux0_output};
-assign evu_output.e_info= {priv_lvl_o, asid_i};
-assign evu_output.s_id=1'b0;
+    assign pc_1_compare_reg[riscv::VLEN-1:0]={reg_q.StructMap.pc_1_compare_reg_msb, reg_q.StructMap.pc_1_compare_reg_lsb};
+    assign pc_2_compare_reg[riscv::VLEN-1:0]={reg_q.StructMap.pc_2_compare_reg_msb, reg_q.StructMap.pc_2_compare_reg_lsb};
+    assign pc_3_compare_reg[riscv::VLEN-1:0]={reg_q.StructMap.pc_3_compare_reg_msb, reg_q.StructMap.pc_3_compare_reg_lsb};
+    assign pc_4_compare_reg[riscv::VLEN-1:0]={reg_q.StructMap.pc_4_compare_reg_msb, reg_q.StructMap.pc_4_compare_reg_lsb};
+//To check if PC has reached the pc_1_compare_reg
 
-//assign evu_output.e_id= '0;
-//assign evu_output.e_info= '0;
-//assign evu_output.s_id='0;
+always @(posedge clk_i) begin
+    if(~rst_ni) begin
+        pc_comparator_o=1'bx;
+        counter_no_o='x;
+    end
+    else if(pc_1_compare_reg==pc_commit_i) begin
+        pc_comparator_o=1'b1;
+        counter_no_o=2'b00;
+    end
+    else if(pc_2_compare_reg==pc_commit_i) begin
+        pc_comparator_o=1'b1;
+        counter_no_o=2'b01;
+    end
+    else if(pc_3_compare_reg==pc_commit_i) begin
+        pc_comparator_o=1'b1;
+        counter_no_o=2'b10;
+    end
+    else if(pc_4_compare_reg==pc_commit_i) begin
+        pc_comparator_o=1'b1;
+        counter_no_o=2'b11;
+    end
+    else begin
+        pc_comparator_o=1'b0;
+        counter_no_o=2'b00;
+    end
+end
+
+assign evu_output.e_id= {pc_comparator_o, evu_mux3_output, evu_mux2_output, evu_mux1_output, evu_mux0_output};
+assign evu_output.e_info= {counter_no_o, priv_lvl_o, asid_i};
+
 endmodule

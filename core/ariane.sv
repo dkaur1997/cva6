@@ -1041,19 +1041,26 @@ import ariane_axi_soc::*; #(
   // ------------
 
   evu_top #(.ASID_WIDTH ( ASID_WIDTH )/*.lite_req_t(req_lite_t), .lite_resp_t(resp_lite_t)*/)
-  evu_top_i (.axi_evu_cfg_req_i(axi_evu_cfg_req_i), 
+  evu_top_i (
+  .axi_evu_cfg_req_i(axi_evu_cfg_req_i), 
   .axi_evu_cfg_resp_o(axi_evu_cfg_resp_o),
-  .clk_i(clk_i), .rst_ni(rst_ni), 
+  .clk_i(clk_i), 
+  .rst_ni(rst_ni), 
   .commit_instr_i(commit_instr_id_commit), 
   .commit_ack_i(commit_ack), 
   .l1_icache_miss_i(icache_miss_cache_perf), 
   .l1_dcache_miss_i(dcache_miss_cache_perf), 
   .itlb_miss_i(itlb_miss_ex_perf), 
   .dtlb_miss_i(dtlb_miss_ex_perf), 
-  .sb_full_i(sb_full), .if_empty_i(~fetch_valid_if_id), 
-  .ex_i(ex_commit), .eret_i(eret), 
+  .sb_full_i(sb_full), 
+  .if_empty_i(~fetch_valid_if_id), 
+  .ex_i(ex_commit), 
+  .eret_i(eret), 
   .resolved_branch_i(resolved_branch), 
-  .evu_output(evu_output), .priv_lvl_i(priv_lvl), 
-  .asid_i(asid_csr_ex));
+  .evu_output(evu_output), 
+  .priv_lvl_i(priv_lvl), 
+  .asid_i(asid_csr_ex),
+  .pc_commit_i (pc_commit),
+  .debug_mode_i(debug_mode));
 
 endmodule // ariane
