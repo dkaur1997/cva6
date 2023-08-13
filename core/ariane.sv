@@ -25,10 +25,10 @@ import "DPI-C" function void init_dromajo(string cfg_f_name);
 `include "axi/typedef.svh"
 module ariane 
 import ariane_pkg::*;
-import ariane_axi_soc::*; #(
-  parameter ariane_pkg::ariane_cfg_t ArianeCfg     = ariane_pkg::ArianeDefaultConfig
-  //parameter type lite_req_t     = logic,
-  //parameter type lite_resp_t    = logic
+#(
+  parameter ariane_pkg::ariane_cfg_t ArianeCfg     = ariane_pkg::ArianeDefaultConfig,
+  parameter type req_lite_t     = logic,
+  parameter type resp_lite_t    = logic
 ) (
   input  logic                         clk_i,
   input  logic                         rst_ni,
@@ -43,8 +43,9 @@ import ariane_axi_soc::*; #(
   input  logic                         time_irq_i,   // timer interrupt in (async)
   input  logic                         debug_req_i,  // debug request (async)
   //EVU
-  input ariane_axi_soc::req_lite_t axi_evu_cfg_req_i, //AXI input to evu_top
-  output ariane_axi_soc::resp_lite_t axi_evu_cfg_resp_o, //AXI output to evu_top
+ 
+  input req_lite_t axi_evu_cfg_req_i, //AXI input to evu_top
+  output resp_lite_t axi_evu_cfg_resp_o, //AXI output to evu_top
   SPU_INTF.Output        evu_output,
 `ifdef FIRESIM_TRACE
   // firesim trace port
@@ -1040,27 +1041,27 @@ import ariane_axi_soc::*; #(
   // EVU_top
   // ------------
 
-  evu_top #(.ASID_WIDTH ( ASID_WIDTH )/*.lite_req_t(req_lite_t), .lite_resp_t(resp_lite_t)*/)
-  evu_top_i (
-  .axi_evu_cfg_req_i(axi_evu_cfg_req_i), 
-  .axi_evu_cfg_resp_o(axi_evu_cfg_resp_o),
-  .clk_i(clk_i), 
-  .rst_ni(rst_ni), 
-  .commit_instr_i(commit_instr_id_commit), 
-  .commit_ack_i(commit_ack), 
-  .l1_icache_miss_i(icache_miss_cache_perf), 
-  .l1_dcache_miss_i(dcache_miss_cache_perf), 
-  .itlb_miss_i(itlb_miss_ex_perf), 
-  .dtlb_miss_i(dtlb_miss_ex_perf), 
-  .sb_full_i(sb_full), 
-  .if_empty_i(~fetch_valid_if_id), 
-  .ex_i(ex_commit), 
-  .eret_i(eret), 
-  .resolved_branch_i(resolved_branch), 
-  .evu_output(evu_output), 
-  .priv_lvl_i(priv_lvl), 
-  .asid_i(asid_csr_ex),
-  .pc_commit_i (pc_commit),
-  .debug_mode_i(debug_mode));
+  evu_top #(.ASID_WIDTH ( ASID_WIDTH ), .req_lite_t(req_lite_t), .resp_lite_t(resp_lite_t))
+   evu_top_i (
+   .axi_evu_cfg_req_i(axi_evu_cfg_req_i), 
+   .axi_evu_cfg_resp_o(axi_evu_cfg_resp_o),
+   .clk_i(clk_i), 
+   .rst_ni(rst_ni), 
+   .commit_instr_i(commit_instr_id_commit), 
+   .commit_ack_i(commit_ack), 
+   .l1_icache_miss_i(icache_miss_cache_perf), 
+   .l1_dcache_miss_i(dcache_miss_cache_perf), 
+   .itlb_miss_i(itlb_miss_ex_perf), 
+   .dtlb_miss_i(dtlb_miss_ex_perf), 
+   .sb_full_i(sb_full), 
+   .if_empty_i(~fetch_valid_if_id), 
+   .ex_i(ex_commit), 
+   .eret_i(eret), 
+   .resolved_branch_i(resolved_branch), 
+   .evu_output(evu_output), 
+   .priv_lvl_i(priv_lvl), 
+   .asid_i(asid_csr_ex),
+   .pc_commit_i (pc_commit),
+   .debug_mode_i(debug_mode));
 
 endmodule // ariane

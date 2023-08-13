@@ -4,15 +4,16 @@
 `include "axi/typedef.svh"
 module evu_top 
 import ariane_pkg::*;
-import ariane_axi_soc::*; #(   
+//import ariane_axi_soc::*; 
+    #(   
     parameter ariane_pkg::ariane_cfg_t ArianeCfg     = ariane_pkg::ArianeDefaultConfig, 
     parameter int unsigned ASID_WIDTH = 0,
     parameter int unsigned NUM_SEL_LINE_REG = 1,
     parameter int unsigned NUM_PC_REG = 1,
     parameter int unsigned AxiLiteAddrWidth = 32'd32,
-    parameter int unsigned AxiLiteDataWidth = 32'd32
-   //parameter type lite_req_t     = logic,
-    //parameter type lite_resp_t    = logic
+    parameter int unsigned AxiLiteDataWidth = 32'd32,
+    parameter type req_lite_t     = logic,
+    parameter type resp_lite_t    = logic
     ) (
   input logic                                     clk_i,
   input logic                                     rst_ni,
@@ -33,8 +34,10 @@ import ariane_axi_soc::*; #(
   input  exception_t                              ex_i,
   input  logic                                    eret_i,
   input  bp_resolve_t                             resolved_branch_i,
-  input ariane_axi_soc::req_lite_t                axi_evu_cfg_req_i,
-  output ariane_axi_soc::resp_lite_t              axi_evu_cfg_resp_o,
+  //input ariane_axi_soc::req_lite_t                axi_evu_cfg_req_i,
+  //output ariane_axi_soc::resp_lite_t              axi_evu_cfg_resp_o,
+  input req_lite_t                axi_evu_cfg_req_i,
+  output resp_lite_t              axi_evu_cfg_resp_o,
   input riscv::priv_lvl_t                         priv_lvl_i,
   input logic [ASID_WIDTH-1:0]                    asid_i,
   SPU_INTF.Output                                 evu_output,
@@ -42,7 +45,7 @@ import ariane_axi_soc::*; #(
   input  logic                                    debug_mode_i
 );
 
-reg [1:0] priv_lvl_o;
+ reg [1:0] priv_lvl_o;
 logic [riscv::VLEN-1:0] pc_1_compare_reg;
 logic [riscv::VLEN-1:0] pc_2_compare_reg;
 logic [riscv::VLEN-1:0] pc_3_compare_reg;
@@ -127,11 +130,11 @@ typedef logic [NumBytesCfgRegs-1:0]  strb_reg_t;
         end
     end
 
-    always_ff @(posedge clk_i or negedge rst_ni) begin
+    always_comb begin
         case (priv_lvl_i)
-        riscv::PRIV_LVL_M: priv_lvl_o = 2'b01;
-        riscv::PRIV_LVL_S: priv_lvl_o = 2'b10;
-        riscv::PRIV_LVL_U: priv_lvl_o = 2'b11;
+        riscv::PRIV_LVL_M: priv_lvl_o = 2'b11;
+        riscv::PRIV_LVL_S: priv_lvl_o = 2'b01;
+        riscv::PRIV_LVL_U: priv_lvl_o = 2'b00;
         endcase
     end
 
@@ -170,8 +173,8 @@ typedef logic [NumBytesCfgRegs-1:0]  strb_reg_t;
         .SecuProtOnly ( 1'b0                ),
         .AxiReadOnly  ( ReadOnly.StrbMap    ), 
         .RegRstVal    ( RstVal              ),
-        .req_lite_t   ( ariane_axi_soc::req_lite_t),
-        .resp_lite_t  ( ariane_axi_soc::resp_lite_t)
+        .req_lite_t   ( req_lite_t),
+        .resp_lite_t  ( resp_lite_t)
         ) i_axi_lite_regs (
         .clk_i,
         .rst_ni,
@@ -276,7 +279,8 @@ always @(posedge clk_i) begin
         pc_comparator_o=1'bx;
         counter_no_o='x;
     end
-    else if(pc_1_compare_reg==pc_commit_i) begin
+    if(commit_ack_i[0] | commit_ack_i[1]) begin
+    if(pc_1_compare_reg==pc_commit_i) begin
         pc_comparator_o=1'b1;
         counter_no_o=2'b00;
     end
@@ -293,12 +297,13 @@ always @(posedge clk_i) begin
         counter_no_o=2'b11;
     end
     else begin
-        pc_comparator_o=1'b0;
-        counter_no_o=2'b00;
+         pc_comparator_o=1'b0;
+         counter_no_o=2'b00;
+     end
     end
 end
 
-assign evu_output.e_id= {pc_comparator_o, evu_mux3_output, evu_mux2_output, evu_mux1_output, evu_mux0_output};
-assign evu_output.e_info= {counter_no_o, priv_lvl_o, asid_i};
+ assign evu_output.e_id= {pc_comparator_o,evu_mux3_output, evu_mux2_output, evu_mux1_output, evu_mux0_output};
+ assign evu_output.e_info= {counter_no_o, priv_lvl_o, asid_i};
 
 endmodule

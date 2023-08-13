@@ -37,13 +37,15 @@ logic evu_mux_output1;
     else if (!debug_mode_i) begin
           if(sel_line==4'b0010) begin //I$ miss
              if (l1_icache_miss_i) begin
-              evu_mux_output=l1_icache_miss_i;
+              evu_mux_output<=1'b1;
               end
+              else evu_mux_output<=1'b0;
             end
           else if (sel_line==4'b0011) begin //D$ miss
              if (l1_dcache_miss_i) begin
-              evu_mux_output=l1_dcache_miss_i;
+              evu_mux_output<=1'b1;
               end
+              else evu_mux_output<=1'b0;
             end
           else if (sel_line==4'b0100) begin //ITLB_miss
              if (itlb_miss_i) begin
