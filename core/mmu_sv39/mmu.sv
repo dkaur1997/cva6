@@ -159,7 +159,8 @@ module mmu import ariane_pkg::*; #(
 
         .lu_is_2M_o       ( itlb_is_2M                 ),
         .lu_is_1G_o       ( itlb_is_1G                 ),
-        .lu_hit_o         ( itlb_lu_hit                )
+        .lu_hit_o         ( itlb_lu_hit                ),
+        .lu_miss_o        ( itlb_miss_o                )
     );
 
     tlb #(
@@ -192,7 +193,8 @@ module mmu import ariane_pkg::*; #(
 
         .lu_is_2M_o       ( dtlb_is_2M                  ),
         .lu_is_1G_o       ( dtlb_is_1G                  ),
-        .lu_hit_o         ( dtlb_lu_hit                 )
+        .lu_hit_o         ( dtlb_lu_hit                 ),
+      .lu_miss_o          ( dtlb_miss_o                 )
     );
 
 
