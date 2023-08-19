@@ -44,7 +44,8 @@ module tlb import ariane_pkg::*; #(
     input  logic [riscv::GPLEN-1:0] gpaddr_to_be_flushed_i,
     output logic                    lu_is_2M_o,
     output logic                    lu_is_1G_o,
-    output logic                    lu_hit_o
+    output logic                    lu_hit_o,
+    output logic                    lu_miss_o,
 );
 
     // SV39 defines three levels of page tables
@@ -96,6 +97,7 @@ module tlb import ariane_pkg::*; #(
         // default assignment
         lu_hit       = '{default: 0};
         lu_hit_o     = 1'b0;
+        lu_miss_o    = 1'b1;
         lu_content_o = '{default: 0};
         lu_g_content_o = '{default: 0};
         lu_gpaddr_o  = '{default: 0};
@@ -121,6 +123,7 @@ module tlb import ariane_pkg::*; #(
                       lu_g_content_o  = content_q[i].gpte;
                       lu_gpaddr_o     = {tags_q[i].gppn2,lu_vaddr_i[29:0]};
                       lu_hit_o        = 1'b1;
+                      lu_miss_o       = 1'b0;
                       lu_hit[i]       = 1'b1;
                 // not a giga page hit so check further
                 end else if (vpn1 == tags_q[i].vpn1) begin
@@ -145,6 +148,7 @@ module tlb import ariane_pkg::*; #(
                             lu_content_o   = content_q[i].pte;
                             lu_g_content_o = g_content;
                             lu_hit_o       = 1'b1;
+                            lu_miss_o      = 1'b0;
                             lu_hit[i]      = 1'b1;
                     end
                 end
